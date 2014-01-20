@@ -52,9 +52,7 @@ enum conftype {
 	INT,
 	UINT,
 	IP,
-	IP6,
 	PORT,
-	PORT6,
 	STRING,
 	SIZE,
 	NET_TYPE
@@ -97,8 +95,6 @@ static struct p9_net_ops p9_tcp_ops = {
 static struct conf conf_array[] = {
 	{ "server", IP, 0 },
 	{ "port", PORT, 0 },
-	{ "server6", IP6, 0 },
-	{ "port6", PORT6, 0 },
 	{ "rdma_debug", UINT, offsetof(struct p9_conf, trans_attr) + offsetof(struct msk_trans_attr, debug) },
 	{ "debug", UINT, offsetof(struct p9_conf, debug) },
 	{ "msize", SIZE, offsetof(struct p9_conf, msize) },
