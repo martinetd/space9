@@ -93,11 +93,13 @@ static void *readwritethr(void* arg) {
 		if (rc < 0) {
 			rc = -rc;
 			printf("write failed at offset %"PRIu64", error: %s (%d)\n", fid->offset, strerror(rc), rc);
+			pthread_barrier_wait(&thrarg->barrier);
 			break;
 		}
 		rc = p9p_fsync(p9_handle, fid);
 		if (rc) {
 			printf("couldn't fsync file %s. error: %s (%d)\n", fid->path, strerror(rc), rc);
+			pthread_barrier_wait(&thrarg->barrier);
 			break;
 		}
 	
