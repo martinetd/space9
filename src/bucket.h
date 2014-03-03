@@ -71,6 +71,7 @@ static inline void bucket_put(bucket_t *bucket, void **pitem) {
 
 	pthread_mutex_lock(&bucket->lock);
 	if (bucket->count >= bucket->size) {
+		pthread_mutex_unlock(&bucket->lock);
 		free(*pitem);
 	} else {
 		bucket->array[bucket->last] = *pitem;
@@ -78,8 +79,8 @@ static inline void bucket_put(bucket_t *bucket, void **pitem) {
 		bucket->count++;
 		if (bucket->last == bucket->size)
 			bucket->last = 0;
+		pthread_mutex_unlock(&bucket->lock);
 	}
-	pthread_mutex_unlock(&bucket->lock);
 	memset(pitem, 0, sizeof(void*));
 }
 
@@ -89,6 +90,7 @@ static inline void * bucket_get(bucket_t *bucket) {
 	pthread_mutex_lock(&bucket->lock);
 
 	if (bucket->count == 0) {
+		pthread_mutex_unlock(&bucket->lock);
 		item = malloc(bucket->alloc_size);
 	} else {
 		item = bucket->array[bucket->first];
@@ -96,8 +98,8 @@ static inline void * bucket_get(bucket_t *bucket) {
 		bucket->count--;
 		if (bucket->first == bucket->size)
 			bucket->first = 0;
+		pthread_mutex_unlock(&bucket->lock);
 	}
-	pthread_mutex_unlock(&bucket->lock);
 
 	return item;
 }
