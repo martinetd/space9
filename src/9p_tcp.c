@@ -164,22 +164,19 @@ static void *msk_tcp_recv_thread(void *arg) {
 	uint32_t n, packet_size, read_size;
 
 	while (trans->state == MSK_CONNECTED) {
-		pthread_mutex_lock(&trans->ctx_lock);
 		do {
-			for (i = 0, ctx = trans->recv_buf;
-			     i < trans->qp_attr.cap.max_recv_wr;
+			for (i = 0, ctx = trans->rctx;
+			     i < trans->rq_depth;
 			     i++, ctx = (struct msk_ctx*)((uint8_t*)ctx + sizeof(struct msk_ctx)))
 				if (!ctx->used != MSK_CTX_PENDING)
 					break;
 
-			if (i == trans->qp_attr.cap.max_recv_wr) {
-				INFO_LOG(internals->debug & MSK_DEBUG_RECV, "Waiting for cond");
-				pthread_cond_wait(&trans->ctx_cond, &trans->ctx_lock);
+			if (i == trans->rq_depth) {
+				INFO_LOG(internals->debug & MSK_DEBUG_RECV, "Waiting for ctx");
+				usleep(100000);
 			}
 
-		} while ( i == trans->qp_attr.cap.max_recv_wr );
-		ctx->used = MSK_CTX_PROCESSING;
-		pthread_mutex_unlock(&trans->ctx_lock);
+		} while ( i == trans->rq_depth || !(atomic_bool_compare_and_swap(&ctx->used, MSK_CTX_PENDING, MSK_CTX_PROCESSING)));
 
 		data = ctx->data;
 
@@ -227,10 +224,7 @@ static void *msk_tcp_recv_thread(void *arg) {
 
 		ctx->callback(trans, data, ctx->callback_arg);
 
-		pthread_mutex_lock(&trans->ctx_lock);
 		ctx->used = MSK_CTX_FREE;
-		pthread_cond_broadcast(&trans->ctx_cond);
-		pthread_mutex_unlock(&trans->ctx_lock);
 	}
 	pthread_exit(NULL);
 }
@@ -239,11 +233,11 @@ void msk_tcp_destroy_trans(msk_trans_t **ptrans) {
 }
 
 int msk_tcp_setup_buffers(msk_trans_t *trans) {
-	trans->recv_buf = malloc(trans->qp_attr.cap.max_recv_wr * sizeof(struct msk_ctx));
-	if (trans->recv_buf == NULL)
+	trans->rctx = malloc(trans->rq_depth * sizeof(struct msk_ctx));
+	if (trans->rctx == NULL)
 		return ENOMEM;
 
-	memset(trans->recv_buf, 0, trans->qp_attr.cap.max_recv_wr * sizeof(struct msk_ctx));
+	memset(trans->rctx, 0, trans->rq_depth * sizeof(struct msk_ctx));
 
 	return 0;
 }
@@ -293,10 +287,10 @@ int msk_tcp_init(msk_trans_t **ptrans, msk_trans_attr_t *attr) {
 
 		trans->server = attr->server;
 		trans->timeout = attr->timeout   ? attr->timeout  : 3000000; // in ms
-		trans->qp_attr.cap.max_send_wr = attr->sq_depth ? attr->sq_depth : 50;
-		trans->qp_attr.cap.max_send_sge = attr->max_send_sge ? attr->max_send_sge : 1;
-		trans->qp_attr.cap.max_recv_wr = attr->rq_depth ? attr->rq_depth : 50;
-		trans->qp_attr.cap.max_recv_sge = attr->max_recv_sge ? attr->max_recv_sge : 1;
+		trans->sq_depth = attr->sq_depth ? attr->sq_depth : 50;
+		trans->max_send_sge = attr->max_send_sge ? attr->max_send_sge : 1;
+		trans->rq_depth = attr->rq_depth ? attr->rq_depth : 50;
+		trans->max_recv_sge = attr->max_recv_sge ? attr->max_recv_sge : 1;
 		trans->disconnect_callback = attr->disconnect_callback;
 
 		ret = pthread_mutex_init(&trans->cm_lock, NULL);
@@ -305,16 +299,6 @@ int msk_tcp_init(msk_trans_t **ptrans, msk_trans_attr_t *attr) {
 			break;
 		}
 		ret = pthread_cond_init(&trans->cm_cond, NULL);
-		if (ret) {
-			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_cond_init failed: %s (%d)", strerror(ret), ret);
-			break;
-		}
-		ret = pthread_mutex_init(&trans->ctx_lock, NULL);
-		if (ret) {
-			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_mutex_init failed: %s (%d)", strerror(ret), ret);
-			break;
-		}
-		ret = pthread_cond_init(&trans->ctx_cond, NULL);
 		if (ret) {
 			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_cond_init failed: %s (%d)", strerror(ret), ret);
 			break;
@@ -394,8 +378,6 @@ static msk_trans_t *clone_trans(msk_trans_t *listening_trans) {
 
 	memset(&trans->cm_lock, 0, sizeof(pthread_mutex_t));
 	memset(&trans->cm_cond, 0, sizeof(pthread_cond_t));
-	memset(&trans->ctx_lock, 0, sizeof(pthread_mutex_t));
-	memset(&trans->ctx_cond, 0, sizeof(pthread_cond_t));
 
 	do {
 		rc = msk_tcp_setup_buffers(trans);
@@ -410,16 +392,6 @@ static msk_trans_t *clone_trans(msk_trans_t *listening_trans) {
 		}
 		rc = pthread_cond_init(&trans->cm_cond, NULL);
 			if (rc) {
-			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_cond_init failed: %s (%d)", strerror(rc), rc);
-			break;
-		}
-		rc = pthread_mutex_init(&trans->ctx_lock, NULL);
-		if (rc) {
-			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_mutex_init failed: %s (%d)", strerror(rc), rc);
-			break;
-		}
-		rc = pthread_cond_init(&trans->ctx_cond, NULL);
-		if (rc) {
 			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "pthread_cond_init failed: %s (%d)", strerror(rc), rc);
 			break;
 		}
@@ -540,28 +512,24 @@ int msk_tcp_post_n_recv(msk_trans_t *trans, msk_data_t *data, int num_sge, ctx_c
 	struct msk_ctx *ctx;
 	int i;
 
-	pthread_mutex_lock(&trans->ctx_lock);
 	do {
-		for (i = 0, ctx = trans->recv_buf;
-		     i < trans->qp_attr.cap.max_recv_wr;
+		for (i = 0, ctx = trans->rctx;
+		     i < trans->rq_depth;
 		     i++, ctx = (struct msk_ctx*)((uint8_t*)ctx + sizeof(struct msk_ctx)))
 			if (!ctx->used != MSK_CTX_FREE)
 				break;
 
-		if (i == trans->qp_attr.cap.max_recv_wr) {
-			INFO_LOG(internals->debug & MSK_DEBUG_RECV, "Waiting for cond");
-			pthread_cond_wait(&trans->ctx_cond, &trans->ctx_lock);
+		if (i == trans->rq_depth) {
+			INFO_LOG(internals->debug & MSK_DEBUG_RECV, "Waiting for ctx");
+			usleep(100000);
 		}
 
-	} while ( i == trans->qp_attr.cap.max_recv_wr );
+	} while ( i == trans->rq_depth || !(atomic_bool_compare_and_swap(&ctx->used, MSK_CTX_FREE, MSK_CTX_PENDING)));
 	ctx->data = data;
 	ctx->num_sge = num_sge;
 	ctx->callback = callback;
 	ctx->err_callback = err_callback;
 	ctx->callback_arg = callback_arg;
-	ctx->used = MSK_CTX_PENDING;
-	pthread_cond_broadcast(&trans->ctx_cond);
-	pthread_mutex_unlock(&trans->ctx_lock);
 
 	return 0;
 }

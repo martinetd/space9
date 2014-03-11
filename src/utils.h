@@ -32,6 +32,7 @@
 #define atomic_postinc(x) __sync_add_and_fetch(&x, 1)
 #define atomic_dec(x) __sync_fetch_and_sub(&x, 1)
 #define atomic_postdec(x) __sync_sub_and_fetch(&x, 1)
+#define	atomic_bool_compare_and_swap __sync_bool_compare_and_swap
 
 
 static inline int set_size(uint32_t *val, char *unit) {
