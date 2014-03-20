@@ -1,5 +1,6 @@
 test_bitmap
 test_utils
+test_tree
 find
 readwrite
 createtree

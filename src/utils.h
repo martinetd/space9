@@ -20,6 +20,7 @@
  */
 
 #include <stdio.h>
+#include <stddef.h>  // offsetof
 #include <errno.h>
 
 #define ERROR_LOG(fmt, args...) fprintf(stderr, "ERROR: %s (%d), %s: " fmt "\n", __FILE__, __LINE__, __func__, ##args)
@@ -36,52 +37,58 @@
 
 
 static inline int set_size(uint32_t *val, char *unit) {
-        switch(unit[0]) {
-                case 'k':
-                case 'K':
-                        *val *= 1024;
-                        break;
-                case 'm':
-                case 'M':
-                        *val *= 1024 * 1024;
-                        break;
-                case 'g':
-                case 'G':
-                        *val *= 1024 * 1024 * 1024;
-                        break;
-                default:
-                        ERROR_LOG("unknown unit '%c'", unit[0]);
-                        return EINVAL;
-        }
+	switch(unit[0]) {
+		case 'k':
+		case 'K':
+			*val *= 1024;
+			break;
+		case 'm':
+		case 'M':
+			*val *= 1024 * 1024;
+			break;
+		case 'g':
+		case 'G':
+			*val *= 1024 * 1024 * 1024;
+			break;
+		default:
+			ERROR_LOG("unknown unit '%c'", unit[0]);
+			return EINVAL;
+	}
 
-        return 0;
+	return 0;
 }
 
 static inline int set_size64(uint64_t *val, char *unit) {
-        switch(unit[0]) {
-                case 'k':
-                case 'K':
-                        *val *= 1024L;
-                        break;
-                case 'm':
-                case 'M':
-                        *val *= 1024 * 1024L;
-                        break;
-                case 'g':
-                case 'G':
-                        *val *= 1024 * 1024 * 1024L;
-                        break;
+	switch(unit[0]) {
+		case 'k':
+		case 'K':
+			*val *= 1024L;
+			break;
+		case 'm':
+		case 'M':
+			*val *= 1024 * 1024L;
+			break;
+		case 'g':
+		case 'G':
+			*val *= 1024 * 1024 * 1024L;
+			break;
 		case 't':
 		case 'T':
 			*val *= 1024 * 1024 * 1024 * 1024L;
 			break;
-                default:
-                        ERROR_LOG("unknown unit '%c'", unit[0]);
-                        return EINVAL;
-        }
+		default:
+			ERROR_LOG("unknown unit '%c'", unit[0]);
+			return EINVAL;
+	}
 
-        return 0;
+	return 0;
 }
+
+
+
+#define container_of(addr, type, member) ({                     \
+	const typeof(((type *) 0)->member) * __mptr = (addr);   \
+	(type *)((char *) __mptr - offsetof(type, member)); })
 
 
 /**

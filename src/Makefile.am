@@ -3,7 +3,7 @@ SUBDIRS = . python tests
 AM_CFLAGS = -g -D_REENTRANT -Wall -Wimplicit -Wformat -Wmissing-braces -Wno-pointer-sign -Werror -I$(srcdir)/../include
 
 lib_LTLIBRARIES = libspace9.la
-libspace9_la_SOURCES = 9p_callbacks.c 9p_core.c 9p_init.c 9p_proto.c 9p_utils.c 9p_libc.c 9p_shell_functions.c 9p_tcp.c
+libspace9_la_SOURCES = 9p_callbacks.c 9p_core.c 9p_init.c 9p_proto.c 9p_utils.c 9p_libc.c 9p_shell_functions.c 9p_tcp.c 9p_rdx_tree.c
 libspace9_la_LDFLAGS = -version-info 2:0:0
 libspace9_la_LIBADD = -lpthread -lrt
 
