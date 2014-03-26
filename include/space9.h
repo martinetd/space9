@@ -216,10 +216,10 @@ typedef int (*p9p_readdir_cb) (void *arg, struct p9_handle *p9_handle, struct p9
 
 #define P9_DEBUG_EVENT 0x0001
 #define P9_DEBUG_SETUP 0x0002
-#define P9_DEBUG_PROTO 0x0004
-#define P9_DEBUG_LIBC  0x0008
-#define P9_DEBUG_SEND  0x0010
-#define P9_DEBUG_RECV  0x0020
+#define P9_DEBUG_PROTO 0x0100
+#define P9_DEBUG_LIBC  0x0200
+#define P9_DEBUG_SEND  0x0400
+#define P9_DEBUG_RECV  0x0800
 
 /**
  * \defgroup init init functions

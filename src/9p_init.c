@@ -350,6 +350,10 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		umask(p9_handle->umask);
 		memcpy(&p9_handle->trans_attr, &p9_conf.trans_attr, sizeof(struct msk_trans_attr));
 
+		/* We need to ask for a little bit more room for better perf */
+		p9_handle->trans_attr.rq_depth += 1;
+		p9_handle->trans_attr.sq_depth = p9_handle->trans_attr.rq_depth;
+
 		/* cache our own hostname - p9_ahndle->hostname is MAX_CANON+1 long*/
 		p9_handle->hostname[MAX_CANON] = '\0';
 		gethostname(p9_handle->hostname, MAX_CANON);
