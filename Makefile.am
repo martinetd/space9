@@ -19,5 +19,8 @@ doc:
 	doxygen ./doxygen.conf
 	cd doxygen/latex; make pdf
 
+cscope:
+	cscope -R -q -b
+
 EXTRA_DIST=libspace9.spec \
            LICENSE
