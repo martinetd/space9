@@ -59,27 +59,27 @@ static int ll_callback(void *arg, struct p9_handle *p9_handle, struct p9_fid *df
 	if (arg)
 		fid = arg;
 	else {
-		rc = p9p_walk(p9_handle, dfid, name, &fid);
+		rc = p9l_walk(dfid, name, &fid, 0);
 		if (rc) {
-			printf("couldn't walk to '%s' in '%s', error: %s (%d)", name, dfid->path, strerror(rc), rc);
+			printf("couldn't walk to '%s' in '%s', error: %s (%d)", name, dfid->fid_path, strerror(rc), rc);
 		}
 	}
 
 	if (fid) {
 		attr.valid = P9_GETATTR_BASIC;
-		rc = p9p_getattr(p9_handle, fid, &attr);
+		rc = p9p_getattr(fid, &attr);
 		if (rc) {
-			printf("couldn't getattr '%s', error: %s (%d)\n", fid->path, strerror(rc), rc);
+			printf("couldn't getattr '%s', error: %s (%d)\n", fid->fid_path, strerror(rc), rc);
 		} else if (qid->type == P9_QTDIR) {
 			filetype='/';
 			printf("%#o %"PRIu64" %d %d %"PRIu64" %"PRIu64" %s%c\n", attr.mode, attr.nlink, attr.uid, attr.gid, attr.size, attr.mtime_sec, name, filetype);
 		} else if (qid->type == P9_QTSYMLINK) {
 			filetype='@';
-			rc = p9p_lopen(p9_handle, fid, O_RDONLY, NULL);
+			rc = p9p_lopen(fid, O_RDONLY, NULL);
 			if (rc) {
 				target = "couldn't open";
 			} else {
-				rc = p9pz_readlink(p9_handle, fid, &target, &data);
+				rc = p9pz_readlink(fid, &target, &data);
 				if (rc < 0) {
 					target = "couldn't readlink";
 				} else {
@@ -98,7 +98,7 @@ static int ll_callback(void *arg, struct p9_handle *p9_handle, struct p9_fid *df
 		}
 
 		if (!arg)
-			p9p_clunk(p9_handle, &fid);
+			p9l_clunk(&fid);
 	}
 	return rc;
 }
@@ -123,7 +123,7 @@ int p9s_ls(struct p9_handle *p9_handle, char *arg) {
 		rc = p9l_open(p9_handle->cwd, arg, &fid, 0, 0, 0);
 		if (!rc) {
 			cb(fid, p9_handle, fid, &fid->qid, 0, strlen(arg), arg);
-			p9p_clunk(p9_handle, &fid);
+			p9l_clunk(&fid);
 		}
 	} else if (rc < 0) {
 		printf("ls failed: %s (%d)\n", strerror(-rc), -rc);
@@ -205,7 +205,7 @@ int p9s_cat(struct p9_handle *p9_handle, char *arg) {
 
 	offset = 0LL;
 	do {
-		rc = p9p_read(p9_handle, fid, buf, 10240, offset);
+		rc = p9p_read(fid, buf, 10240, offset);
 		if (rc > 0) {
 			n = 0;
 			while (n < rc) {
@@ -218,9 +218,9 @@ int p9s_cat(struct p9_handle *p9_handle, char *arg) {
 		}
 	} while (rc > 0);
 
-	tmp = p9p_clunk(p9_handle, &fid);
+	tmp = p9l_clunk(&fid);
 	if (tmp) {
-		printf("clunk failed on fid %u (%s), error: %s (%d)\n", fid->fid, fid->path, strerror(tmp), tmp);
+		printf("clunk failed on fid %u (%s), error: %s (%d)\n", fid->fid, fid->fid_path, strerror(tmp), tmp);
 	}
 
 	return rc;
@@ -235,7 +235,8 @@ int p9s_mkdir(struct p9_handle *p9_handle, char *arg) {
 }
 
 int p9s_pwd(struct p9_handle *p9_handle, char *arg) {
-	printf("%s\n", p9_handle->cwd->path);
+	// fixme: only prints last component
+	printf("%s\n", p9_handle->cwd->fid_path);
 	return 0;
 }
 
@@ -274,15 +275,15 @@ int p9s_xwrite(struct p9_handle *p9_handle, char *arg) {
 	if (buf) {
 		rc = p9l_write(fid, buf, count);
 		if (rc < 0) {
-			printf("write failed on file %s, error: %s (%d)\n", fid->path, strerror(-rc), -rc);
+			printf("write failed on file %s, error: %s (%d)\n", fid->fid_path, strerror(-rc), -rc);
 		}
 		printf("wrote %d bytes\n", rc);
 		free(buf);
 	}
 
-	tmp = p9p_clunk(p9_handle, &fid);
+	tmp = p9l_clunk(&fid);
 	if (tmp) {
-		printf("clunk failed on fid %u (%s), error: %s (%d)\n", fid->fid, fid->path, strerror(tmp), tmp);
+		printf("clunk failed on fid %u (%s), error: %s (%d)\n", fid->fid, fid->fid_path, strerror(tmp), tmp);
 	}	
 	return rc;
 }

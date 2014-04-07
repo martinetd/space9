@@ -29,6 +29,7 @@
 #include <netdb.h>      // gethostbyname
 #include <sys/socket.h> // gethostbyname
 #include <unistd.h>     // sleep
+#include <inttypes.h>   // PRIu64
 #include <fcntl.h>
 #include <assert.h>
 #include "9p_internals.h"
@@ -36,42 +37,45 @@
 #include "settings.h"
 
 
-static int p9ci_rebuild_fids(void *arg, uint32_t i) {
+#if 0
+static int p9ci_rebuild_fids(void *arg, struct rdx_node *node) {
 	struct p9_handle *p9_handle = arg;
 	int rc, flag = 0;
-	struct p9_fid *fid = p9_handle->fids[i];
+	struct p9_fid *fid;
 
-	if (i == 0 || fid == NULL)
+	if (p9_handle == NULL || node == NULL)
 		return EINVAL;
 
-	rc = p9p_rewalk(p9_handle, p9_handle->root_fid, fid->path, fid->fid);
+	fid = p9_rdx_fid(node);
+
+	rc = p9p_rewalk(p9_handle->root_fid, fid->path, fid->fid);
 	if (rc) {
-		printf("rewalk failed on fid %u\n", i);
+		printf("rewalk failed on fid %p\n", fid);
 		return rc;
 	}
 
-	switch (fid->openflags) {
-	case RDFLAG:
-		flag = O_RDONLY;
-		break;
-	case WRFLAG:
-		flag = O_WRONLY;
-		break;
-	case RDFLAG|WRFLAG:
-		flag = O_RDWR;
-		break;
-	default:
-		break;
-	}
-
 	if (fid->openflags) {
-		rc = p9p_lopen(p9_handle, fid, flag, NULL);
+		switch (fid->openflags) {
+		case RDFLAG:
+			flag = O_RDONLY;
+			break;
+		case WRFLAG:
+			flag = O_WRONLY;
+			break;
+		case RDFLAG|WRFLAG:
+			flag = O_RDWR;
+			break;
+		default:
+			break;
+		}
+		rc = p9p_lopen(fid, flag, NULL);
 		if (rc)
-			printf("re-lopen failed on fid %u\n", i);
+			printf("re-lopen failed on fid %p\n", fid);
 	}
 
 	return rc;
 }
+#endif
 
 int p9c_reconnect(struct p9_handle *p9_handle) {
 	int sleeptime = 0;
@@ -140,15 +144,10 @@ int p9c_reconnect(struct p9_handle *p9_handle) {
 			break;
 		}
 
-		rc = p9p_attach(p9_handle, p9_handle->uid, &p9_handle->root_fid);
+		rc = p9c_attach(p9_handle, p9_handle->uid, &p9_handle->root_fid);
 		if (rc) {
 			ERROR_LOG("attach failed: %s (%d)", strerror(rc), rc);
 			break;
-		}
-
-		for (i=1; i < p9_handle->max_fid; i++) {
-			if (p9_handle->fids[i] != NULL)
-				p9ci_rebuild_fids(p9_handle, i);
 		}
 	}
 
@@ -291,8 +290,7 @@ int p9c_putreply(struct p9_handle *p9_handle, msk_data_t *data) {
 	return rc;
 }
 
-
-int p9c_getfid(struct p9_handle *p9_handle, struct p9_fid **pfid) {
+static int p9ci_getfid(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 	struct p9_fid *fid;
 	uint32_t fid_i;
 
@@ -314,26 +312,268 @@ int p9c_getfid(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 	fid->p9_handle = p9_handle;
 	fid->fid = fid_i;
 	fid->openflags = 0;
+	fid->type = -1;
+	memset(&fid->qid, 0, sizeof(struct p9_qid));
 	fid->offset = 0L;
+	fid->rdx_node = default_rdx_node;
 	*pfid = fid;
-	pthread_mutex_lock(&p9_handle->fid_lock);
-	p9_handle->fids[fid_i] = fid;
-	pthread_mutex_unlock(&p9_handle->fid_lock);
 	return 0;
 }
 
+static void p9ci_addfid(struct p9_fid *parent_fid, struct p9_fid **pfid, const char *path) {
+	struct rdx_node *exists;
+	struct p9_fid *new_fid = *pfid;
 
-int p9c_putfid(struct p9_handle *p9_handle, struct p9_fid **pfid) {
+	new_fid->fid_path = strdup(path);
+
+
+	exists = rdx_insert(&parent_fid->rdx_node, &new_fid->rdx_node);
+
+	if (exists) {
+		*pfid = p9_rdx_fid(exists);
+		INFO_LOG(new_fid->p9_handle->debug & P9_DEBUG_CORE, "%p: %"PRIu64" (%i, %s) insert on exist", *pfid, (*pfid)->rdx_node.refcnt, (*pfid)->fid, (*pfid)->fid_path);
+		p9c_putfidcb(&new_fid->rdx_node);
+	} else {
+		INFO_LOG(new_fid->p9_handle->debug & P9_DEBUG_CORE, "%p: %"PRIu64" (%i, %s) insert new", new_fid, new_fid->rdx_node.refcnt, new_fid->fid, new_fid->fid_path);
+	}
+
+}
+
+static void p9ci_invalidfid(struct p9_handle *p9_handle, struct p9_fid *fid) {
 	pthread_mutex_lock(&p9_handle->fid_lock);
-	p9_handle->fids[(*pfid)->fid] = NULL;
-	clear_bit(p9_handle->fids_bitmap, (*pfid)->fid);
+	clear_bit(p9_handle->fids_bitmap, fid->fid);
 	pthread_mutex_unlock(&p9_handle->fid_lock);
 
-	bucket_put(p9_handle->fids_bucket, (void**)pfid);
+	bucket_put(p9_handle->fids_bucket, (void*)fid);
+}
+
+int p9c_putfidcb(struct rdx_node *node) {
+	struct p9_fid *fid;
+	struct p9_handle *p9_handle;
+
+	if (node == NULL)
+		return EINVAL;
+
+	fid = p9_rdx_fid(node);
+
+	p9_handle = fid->p9_handle;
+	if (p9_handle == NULL)
+		return EINVAL;
+
+	INFO_LOG(p9_handle->debug & P9_DEBUG_CORE, "%p (%i, %s, refcnt %"PRIu64") being destroyed", fid, fid->fid, fid->fid_path, fid->rdx_node.refcnt);
+
+	p9p_clunk(fid);
+
+	pthread_mutex_lock(&p9_handle->fid_lock);
+	clear_bit(p9_handle->fids_bitmap, fid->fid);
+	pthread_mutex_unlock(&p9_handle->fid_lock);
+
+	/* need the cast because we can't free const... */
+	free((char*)fid->fid_path);
+	fid->fid_path = (const char*)0xdeaddeaddeaddead;
+
+	bucket_put(p9_handle->fids_bucket, (void*)fid);
 
 	return 0;
 }
 
+int p9c_putfid(struct p9_fid **pfid) {
+	switch ((*pfid)->type) {
+		case P9_FID_ATTACH:
+			break;
+
+		case P9_FID_WALK:
+			INFO_LOG((*pfid)->p9_handle->debug & P9_DEBUG_CORE, "%p: %"PRIu64" (%i, %s)", (*pfid), (*pfid)->rdx_node.refcnt, (*pfid)->fid, (*pfid)->fid_path);
+			/* does all the work, somehow */
+			rdx_unref(&(*pfid)->rdx_node);
+			break;
+
+		case P9_FID_XATTR:
+			p9c_putfidcb(&(*pfid)->rdx_node);
+			break;
+
+		default:
+			ERROR_LOG("not a known fid type?! %p", *pfid);
+			return EINVAL;
+	}
+
+	*pfid = NULL;
+	return 0;
+}
+
+int p9c_takefid(struct p9_fid *fid) {
+	switch (fid->type) {
+                case P9_FID_ATTACH:
+                        break;
+
+                case P9_FID_WALK:
+			INFO_LOG(fid->p9_handle->debug & P9_DEBUG_CORE, "%p: %"PRIu64" (%i, %s)", fid, fid->rdx_node.refcnt, fid->fid, fid->fid_path);
+
+                        rdx_ref(&fid->rdx_node);
+	                break;
+
+                case P9_FID_XATTR:
+			ERROR_LOG("refs don't make sense on xattr fid %p", fid);
+			return EINVAL;
+
+                default:
+                        ERROR_LOG("not a known fid type?! %p", fid);
+                        return EINVAL;
+        }
+
+        return 0;
+}
+
+
+int p9c_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) {
+	int rc;
+	struct p9_fid *fid;
+
+	/* Sanity check */
+	if (p9_handle == NULL || pfid == NULL)
+		return EINVAL;
+
+	rc = p9ci_getfid(p9_handle, &fid);
+	if (rc) {
+		ERROR_LOG("not enough fids - failing attach");
+		return rc;
+	}
+
+	rc = p9p_attach(p9_handle, uid, fid);
+	if (rc) {
+		ERROR_LOG("attach failed: %d", rc);
+		p9ci_invalidfid(p9_handle, fid);
+		return rc;
+	}
+
+	/* attach is out of tree, there's no addfid */
+	fid->type = P9_FID_ATTACH;
+	*pfid = fid;
+
+	return 0;
+}
+
+int p9c_walk(struct p9_fid *fid, char *path, struct p9_fid **pnewfid) {
+	int rc;
+	struct p9_fid *newfid;
+	struct p9_handle *p9_handle;
+	struct rdx_node *node;
+	char *path_left;
+
+	/* Sanity check */
+	if (fid == NULL || fid->p9_handle == NULL || pnewfid == NULL)
+		return EINVAL;
+
+	p9_handle = fid->p9_handle;
+
+	if (strchr(path, '/')) {
+		ERROR_LOG("Can't walk compound path - we need to check that all subpaths exist");
+		return EINVAL;
+	}
+
+	/* Check if we have it first */
+	node = rdx_lookup(&fid->rdx_node, path, &path_left);
+
+	if (path_left == NULL) {
+		*pnewfid = p9_rdx_fid(node);
+		INFO_LOG(p9_handle->debug & P9_DEBUG_CORE, "%p: %"PRIu64" lookup match", *pnewfid, (*pnewfid)->rdx_node.refcnt);
+		return 0;
+	}
+
+	rc = p9ci_getfid(p9_handle, &newfid);
+	if (rc) {
+		ERROR_LOG("not enough fids - failing walk");
+		return rc;
+	}
+
+	rc = p9p_walk(fid, path, newfid);
+	if (rc) {
+		rdx_unref(&fid->rdx_node);
+		p9ci_invalidfid(fid->p9_handle, newfid);
+		return rc;
+	}
+
+	newfid->type = P9_FID_WALK;
+	p9ci_addfid(fid, &newfid, path);
+
+	*pnewfid = newfid;
+
+	return 0;
+}
+
+int p9c_xattrwalk(struct p9_fid *fid, struct p9_fid **pnewfid, char *name, uint64_t *psize) {
+	int rc;
+	struct p9_fid *newfid;
+	struct p9_handle *p9_handle;
+
+	/* Sanity check */
+	if (fid == NULL || fid->p9_handle == NULL || pnewfid == NULL || name == NULL || psize == NULL)
+		return EINVAL;
+
+	p9_handle = fid->p9_handle;
+
+	rc = p9ci_getfid(p9_handle, &newfid);
+	if (rc) {
+		ERROR_LOG("not enough fids - failing xattrwalk");
+		return rc;
+	}
+
+	rc = p9p_xattrwalk(fid, newfid, name, psize);
+	if (rc) {
+		ERROR_LOG("xattrwalk failed: %d", rc);
+		p9ci_invalidfid(p9_handle, newfid);
+		return rc;
+	}
+
+	/* attach is out of tree, there's no addfid */
+	newfid->type = P9_FID_XATTR;
+	newfid->fid_path = strdup(fid->fid_path);
+	*pnewfid = newfid;
+
+	return 0;
+}
+
+int p9c_lcreate(struct p9_fid **pfid, char *name, uint32_t flags, uint32_t mode,
+               uint32_t gid, uint32_t *iounit) {
+	int rc;
+	struct p9_fid *fid, *newfid;
+	struct p9_handle *p9_handle;
+
+	/* Sanity check */
+	if (pfid == NULL || *pfid == NULL || (*pfid)->p9_handle == NULL)
+		return EINVAL;
+
+	fid = *pfid;
+	p9_handle = fid->p9_handle;
+
+	rc = p9ci_getfid(p9_handle, &newfid);
+	if (rc) {
+		ERROR_LOG("not enough fids - failing attach");
+		return rc;
+	}
+
+	rc = p9p_walk(fid, NULL, newfid);
+	if (rc) {
+		p9ci_invalidfid(fid->p9_handle, newfid);
+		return rc;
+	}
+
+	newfid->type = P9_FID_XATTR;
+
+	rc = p9p_lcreate(newfid, name, flags, mode, gid, iounit);
+	if (rc) {
+		p9c_putfidcb(&newfid->rdx_node);
+		return rc;
+	}
+
+
+	newfid->fid_path = strdup(fid->fid_path);
+	p9c_putfid(&fid);
+
+	*pfid = newfid;
+
+	return 0;
+}
 
 int p9c_reg_mr(struct p9_handle *p9_handle, msk_data_t *data) {
 	data->mr = p9_handle->net_ops->reg_mr(p9_handle->trans, data->data, data->max_size, IBV_ACCESS_LOCAL_WRITE);

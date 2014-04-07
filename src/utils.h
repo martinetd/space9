@@ -20,7 +20,6 @@
  */
 
 #include <stdio.h>
-#include <stddef.h>  // offsetof
 #include <errno.h>
 
 #define ERROR_LOG(fmt, args...) fprintf(stderr, "ERROR: %s (%d), %s: " fmt "\n", __FILE__, __LINE__, __func__, ##args)
@@ -84,11 +83,6 @@ static inline int set_size64(uint64_t *val, char *unit) {
 	return 0;
 }
 
-
-
-#define container_of(addr, type, member) ({                     \
-	const typeof(((type *) 0)->member) * __mptr = (addr);   \
-	(type *)((char *) __mptr - offsetof(type, member)); })
 
 
 /**

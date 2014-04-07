@@ -179,7 +179,7 @@ Most fd-operations can be done on fids once you have one (walk or open)") p9_han
 	}
 %feature("docstring", "prints working directory") pwd;
 	char *pwd() {
-		return $self->cwd->path;
+		return $self->cwd->fid_path;
 	}
 %feature("docstring", "change current directory") cd;
 	void cd(char *path) {
@@ -300,7 +300,7 @@ mode is file mode if created, umask is applied") open;
 	PyObject *statfs() {
 		struct fs_stats stat;
 		PyObject *ret = NULL;
-		errno = p9p_statfs($self, $self->cwd, &stat);
+		errno = p9p_statfs($self->cwd, &stat);
 		if (!errno) {
 			ret = Py_BuildValue("{sHsHsKsKsKsKsKsKsH}",
 				"type", stat.type, "bsize", stat.bsize, "blocks", stat.blocks,
@@ -362,7 +362,7 @@ mode is file mode if created, umask is applied") open;
 		PyObject *pystr = NULL;
 		msk_data_t *data;
 
-		rc = p9pz_read($self, fid, count, fid->offset, &data);
+		rc = p9pz_read(fid, count, fid->offset, &data);
 
 		if (rc >= 0) {
 			pystr = PyString_FromStringAndSize((char*)data->data, MIN(count, rc));
@@ -422,7 +422,7 @@ flags can be O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND") fid;
 	}
 	~fid() {
 		if ($self->ptr != NULL) {
-			p9p_clunk($self->ptr->p9_handle, &$self->ptr);
+			p9l_clunk(&$self->ptr);
 			Py_DECREF($self->handle_obj);
 		}
 		free($self);
@@ -442,7 +442,7 @@ flags can be O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND") fid;
 }
 %feature("docstring", "close, flush and destroy fid") clunk;
 	void clunk() {
-		errno = p9p_clunk($self->ptr->p9_handle, &$self->ptr);
+		errno = p9l_clunk(&$self->ptr);
 
 		/* it's possible clunk failed before sending the message, if so don't decref */
 		if ($self->ptr == NULL) {
@@ -451,12 +451,12 @@ flags can be O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND") fid;
 	}
 %feature("docstring", "unlink - does NOT close") unlink;
 	void unlink() {
-		p9l_rm($self->ptr, $self->ptr->path);
+		p9l_rm(p9_rdx_fid($self->ptr->rdx_node.parent), $self->ptr->fid_path);
 	}
 %feature("docstring", "open if fid was obtained from a walk/had no flag on creation") open;
        void open(uint32_t flags) {
-               if ($self->ptr->openflags == 0)
-                       errno = p9p_lopen($self->ptr->p9_handle, $self->ptr, flags, NULL);
+//               if ($self->ptr->openflags == 0)
+                       errno = p9p_lopen($self->ptr, flags, NULL);
 	}
 	void chown(uint32_t uid, uint32_t gid) {
 		errno = p9l_fchown($self->ptr, uid, gid);
@@ -490,7 +490,7 @@ flags can be O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND") fid;
 		PyObject *pystr = NULL;
 		msk_data_t *data;
 
-		rc = p9pz_read($self->ptr->p9_handle, $self->ptr, count, $self->ptr->offset, &data);
+		rc = p9pz_read($self->ptr, count, $self->ptr->offset, &data);
 
 		if (rc >= 0) {
 			pystr = PyString_FromStringAndSize((char*)data->data, MIN(count, rc));
@@ -531,7 +531,7 @@ new fid can then be opened with fid.open() or it can be used to walk somewhere e
 		return fxattrset($self->ptr, field, buf, flags);
 	}
 	char *path() {
-		return $self->ptr->path;
+		return $self->ptr->fid_path;
 	}
 	uint64_t offset() {
 		return $self->ptr->offset;

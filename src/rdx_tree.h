@@ -2,8 +2,17 @@
 #define _RDX_TREE_H
 
 #include <string.h>
-#include "9p_internals.h"
+#include <pthread.h>
+#include <stdint.h>
+#include <stddef.h>  // offsetof
+
 #include "bsd_tree.h"
+
+#ifndef container_of
+#define container_of(addr, type, member) ({                     \
+	const typeof(((type *) 0)->member) * __mptr = (addr);   \
+	(type *)((char *) __mptr - offsetof(type, member)); })
+#endif
 
 struct rb_node {
 	RB_ENTRY(rb_node) rb_link;
@@ -38,13 +47,14 @@ struct rdx_node {
 
 /* default node: everything is 0 */
 #define DEFAULT_RDX_NODE { .rwlock = PTHREAD_RWLOCK_INITIALIZER }
-
-typedef void (*delete_cb_t)(struct rdx_node *node);
+const static struct rdx_node default_rdx_node = DEFAULT_RDX_NODE;
 
 /**
  * Insert:
  *
  * Only inserts directly from parent directory node.
+ *
+ * Return value is existing node if it exists, refcount IS incremented in either case.
  *
  */
 struct rdx_node *rdx_insert(struct rdx_node *parent, struct rdx_node *entry);
@@ -68,7 +78,7 @@ int rdx_delete(struct rdx_node *entry);
 struct rdx_node *rdx_lookup(struct rdx_node *node, char *path, char **remaining_path);
 
 /**
- * Unref:
+ * Unref/ref:
  *
  * Starts from leaf node and goes back up.
  * If something goes to 0, we *re-increment* it and mark it for deletion.
@@ -77,5 +87,18 @@ struct rdx_node *rdx_lookup(struct rdx_node *node, char *path, char **remaining_
  * Last call to delete (ordered thanks to wrlock) will do the actual delete.
  */
 void rdx_unref(struct rdx_node *node);
+void rdx_ref(struct rdx_node *node);
+
+
+typedef int (rdx_cb_t)(struct rdx_node *node);
+
+/**
+ * fold:
+ *
+ * calls rdx_cb on all elements given arg
+ *
+ * return value is the last non-null value we see
+ */
+int rdx_iter(struct rdx_node *node, rdx_cb_t *rdx_cb);
 
 #endif

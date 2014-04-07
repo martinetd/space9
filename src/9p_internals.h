@@ -6,6 +6,7 @@
 #include "space9.h"
 #include "bitmap.h"
 #include "bucket.h"
+#include "rdx_tree.h"
 
 #if HAVE_MOOSHIKA
 #else
@@ -153,6 +154,32 @@ struct p9_str {
 	char *str; /*< The string */
 };
 
+struct p9_fid {
+	struct p9_handle *p9_handle;
+	uint32_t fid;
+	uint64_t offset;
+	enum fidtype {
+		P9_FID_ATTACH,
+		P9_FID_WALK,
+		P9_FID_XATTR
+	} type;
+	int openflags;
+	struct p9_qid qid;
+	struct rdx_node rdx_node;
+#define fid_path rdx_node.node_path
+};
+
+/**
+ * @brief: helper for node
+ */
+static inline struct p9_fid *p9_rdx_fid(struct rdx_node *node) {
+	return container_of(node, struct p9_fid, rdx_node);
+}
+
+static inline struct p9_fid *p9_fid_parent(struct p9_fid *fid) {
+	return p9_rdx_fid(fid->rdx_node.parent);
+}
+
 
 static inline void p9_get_tag(uint16_t *ptag, uint8_t *data) {
 	memcpy(ptag, data + sizeof(uint32_t) /* msg len */ + sizeof(uint8_t) /* msg type */, sizeof(uint16_t));
@@ -204,7 +231,6 @@ struct p9_handle {
 	struct p9_tag *tags;
 	bitmap_t *fids_bitmap;
 	bucket_t *fids_bucket;
-	struct p9_fid **fids;
 	uint32_t uid;
 	uint32_t recv_num;
 	uint32_t msize;
@@ -243,13 +269,13 @@ void p9_send_err_cb(msk_trans_t *trans, msk_data_t *data, void *arg);
  * @param[in]    newfid_i:	new fid number
  * @return 0 on success, errno value on error
  */
-int p9p_rewalk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, uint32_t newfid_i);
+int p9p_rewalk(struct p9_fid *fid, char *path, uint32_t newfid_i);
 
-ssize_t p9pz_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, msk_data_t *data, uint64_t offset, uint16_t *ptag);
+ssize_t p9pz_write_send(struct p9_fid *fid, msk_data_t *data, uint64_t offset, uint16_t *ptag);
 ssize_t p9pz_write_wait(struct p9_handle *p9_handle, uint16_t tag);
-ssize_t p9p_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset, uint16_t *ptag);
+ssize_t p9p_write_send(struct p9_fid *fid, char *buf, size_t count, uint64_t offset, uint16_t *ptag);
 ssize_t p9p_write_wait(struct p9_handle *p9_handle, uint16_t tag);
-ssize_t p9pz_read_send(struct p9_handle *p9_handle, struct p9_fid *fid, size_t count, uint64_t offset, uint16_t *ptag);
+ssize_t p9pz_read_send(struct p9_fid *fid, size_t count, uint64_t offset, uint16_t *ptag);
 ssize_t p9pz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t tag);
 
 static inline uint32_t p9p_write_len(struct p9_handle *p9_handle, uint32_t count) {
@@ -269,6 +295,8 @@ static inline uint32_t p9p_read_len(struct p9_handle *p9_handle, uint32_t count)
 		count = 1024*1024;
 	return count;
 }
+
+int p9c_putfidcb(struct rdx_node *node);
 
 
 #endif

@@ -23,6 +23,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <sys/param.h>
+#include <dirent.h>
 
 #include "../rdx_tree.h"
 

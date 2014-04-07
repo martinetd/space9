@@ -127,15 +127,7 @@ typedef struct p9_qid {
 	uint64_t path; /*< Per-server-unique ID for a file system element */
 } p9_qid_t;
 
-struct p9_fid {
-	struct p9_handle *p9_handle;
-	uint32_t fid;
-	uint64_t offset;
-	char path[MAXPATHLEN];
-	int pathlen;
-	int openflags;
-	struct p9_qid qid;
-};
+struct p9_fid;
 
 /* Bit values for getattr valid field. */
 #define P9_GETATTR_MODE		0x00000001ULL
@@ -220,6 +212,7 @@ typedef int (*p9p_readdir_cb) (void *arg, struct p9_handle *p9_handle, struct p9
 #define P9_DEBUG_LIBC  0x0200
 #define P9_DEBUG_SEND  0x0400
 #define P9_DEBUG_RECV  0x0800
+#define P9_DEBUG_CORE  0x1000
 
 /**
  * \defgroup init init functions
@@ -295,22 +288,14 @@ int p9c_getreply(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t tag);
 int p9c_putreply(struct p9_handle *p9_handle, msk_data_t *data);
 
 /**
- * @brief Get a fid structure ready to be used
- *
- * @param[in]     p9_handle:	connection handle
- * @param[out]    pfid:		fid to be filled
- * @return 0 on success, errno value on error
- */
-int p9c_getfid(struct p9_handle *p9_handle, struct p9_fid **pfid);
-
-/**
  * @brief Release a fid after clunk
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     pfid:		fid to release
  * @return 0 on success, errno value on error
  */
-int p9c_putfid(struct p9_handle *p9_handle, struct p9_fid **pfid);
+int p9c_putfid(struct p9_fid **pfid);
+
+int p9c_takefid(struct p9_fid *fid);
 
 int p9c_reg_mr(struct p9_handle *p9_handle, msk_data_t *data);
 int p9c_dereg_mr(struct p9_handle *p9_handle, msk_data_t *data);
@@ -369,10 +354,28 @@ int p9p_auth(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pafid);
  *
  * @param[in]     p9_handle:	connection handle
  * @param[in]     uid:		uid to use
+ * @param[in]     fid:		initial fid
+ * @return 0 on success, errno value on error.
+ */
+int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid *fid);
+
+
+/**
+ * @brief Attach a mount point for a given user
+ * Not authentification yet.
+ *
+ * This is also done on init, the fid 0 is always populated.
+ *
+ *
+ * size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s] n_uname[4]
+ * size[4] Rattach tag[2] qid[13]
+ *
+ * @param[in]     p9_handle:	connection handle
+ * @param[in]     uid:		uid to use
  * @param[out]    pfid:		initial fid to populate
  * @return 0 on success, errno value on error.
  */
-int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid);
+int p9c_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid);
 
 
 /**
@@ -395,13 +398,26 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag);
  * size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
  * size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])
  *
- * @param[in]     p9_handle:	connection handle
+ * @param[in]     fid:		existing fid to use
+ * @param[in]     path:		path to be based on. if NULL, clone the fid
+ * @param[in]     newfid:	new fid to use
+ * @return 0 on success, errno value on error.
+ */
+int p9p_walk(struct p9_fid *fid, char *path, struct p9_fid *newfid);
+
+/**
+ * @brief Creates a new fid from path relative to a fid, or clone the said fid
+ *
+ *
+ * size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
+ * size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])
+ *
  * @param[in]     fid:		existing fid to use
  * @param[in]     path:		path to be based on. if NULL, clone the fid
  * @param[out]    pnewfid:	new fid to use
  * @return 0 on success, errno value on error.
  */
-int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct p9_fid **pnewfid);
+int p9c_walk(struct p9_fid *fid, char *path, struct p9_fid **pnewfid);
 
 /* size[4] Rread tag[2] count[4] data[count] */
 #define P9_ROOM_RREAD (P9_STD_HDR_SIZE + 4 )
@@ -413,7 +429,6 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
  * size[4] Tread tag[2] fid[4] offset[8] count[4]
  * size[4] Rread tag[2] count[4] data[count]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to use
  * @param[in]     count:	count of bytes to read
  * @param[in]     offset:	offset from which to read
@@ -421,7 +436,7 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
  * @return number of bytes read if >= 0, -errno on error.
  *          0 indicates eof?
  */
-ssize_t p9pz_read(struct p9_handle *p9_handle, struct p9_fid *fid,  size_t count, uint64_t offset, msk_data_t **pdata);
+ssize_t p9pz_read(struct p9_fid *fid,  size_t count, uint64_t offset, msk_data_t **pdata);
 
 static inline int p9pz_read_put(struct p9_handle *p9_handle, msk_data_t *data) {
 	data->data -= P9_ROOM_RREAD;
@@ -436,7 +451,6 @@ static inline int p9pz_read_put(struct p9_handle *p9_handle, msk_data_t *data) {
  * size[4] Tread tag[2] fid[4] offset[8] count[4]
  * size[4] Rread tag[2] count[4] data[count]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to use
  * @param[out]    buf:		data is copied there.
  * @param[in]     count:	count of bytes to read
@@ -444,7 +458,7 @@ static inline int p9pz_read_put(struct p9_handle *p9_handle, msk_data_t *data) {
  * @return number of bytes read if >= 0, -errno on error.
  *          0 indicates eof
  */
-ssize_t p9p_read(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset);
+ssize_t p9p_read(struct p9_fid *fid, char *buf, size_t count, uint64_t offset);
 
 
 /* size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count] */
@@ -457,13 +471,12 @@ ssize_t p9p_read(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, siz
  * size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
  * size[4] Rwrite tag[2] count[4]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to use
  * @param[in]     data:		msk_registered msk_data pointer here
  * @param[in]     offset:	offset from which to write
  * @return number of bytes written if >= 0, -errno on error.
  */
-ssize_t p9pz_write(struct p9_handle *p9_handle, struct p9_fid *fid, msk_data_t *data, uint64_t offset);
+ssize_t p9pz_write(struct p9_fid *fid, msk_data_t *data, uint64_t offset);
 
 /**
  * @brief Write to a file.
@@ -473,14 +486,13 @@ ssize_t p9pz_write(struct p9_handle *p9_handle, struct p9_fid *fid, msk_data_t *
  * size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
  * size[4] Rwrite tag[2] count[4]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to use
  * @param[in]     buf:		data to send
  * @param[in]     count:	number of bytes to write
  * @param[in]     offset:	offset from which to write
  * @return number of bytes written if >= 0, -errno on error
  */
-ssize_t p9p_write(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset);
+ssize_t p9p_write(struct p9_fid *fid, char *buf, size_t count, uint64_t offset);
 
 /**
  * @brief Clunk a fid.
@@ -490,11 +502,10 @@ ssize_t p9p_write(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, si
  * size[4] Tclunk tag[2] fid[4]
  * size[4] Rclunk tag[2]
  *
- * @param[in]     p9_handle:	connection handle
- * @param[in]     pfid:		fid to clunk
+ * @param[in]     fid:		fid to clunk
  * @return 0 on success, errno value on error.
  */
-int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid);
+int p9p_clunk(struct p9_fid *fid);
 
 /**
  * @brief Clunk a fid and unlinks the file associated with it.
@@ -504,11 +515,10 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid);
  * size[4] Tremove tag[2] fid[4]
  * size[4] Rremove tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     pfid:		fid to remove
  * @return 0 on success, errno value on error.
  */
-int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid);
+int p9p_remove(struct p9_fid **pfid);
 
 /**
  * @brief Get filesystem information.
@@ -518,12 +528,11 @@ int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid);
  * size[4] Rstatfs tag[2] type[4] bsize[4] blocks[8] bfree[8] bavail[8]
  *                        files[8] ffree[8] fsid[8] namelen[4]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		gets the stats of the filesystem this fid belongs to
  * @param[out]    fs_stats:	Filled with infos. Must be non-NULL.
  * @return 0 on success, errno value on error.
  */
-int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats *fs_stats);
+int p9p_statfs(struct p9_fid *fid, struct fs_stats *fs_stats);
 
 /**
  * @brief Open a file by its fid
@@ -532,7 +541,6 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
  * size[4] Tlopen tag[2] fid[4] flags[4]
  * size[4] Rlopen tag[2] qid[13] iounit[4]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to open
  * @param[in]     flags:	open flags as described in Linux open(2): O_RDONLY, O_RDWR, O_WRONLY, etc.
  * @param[out]    iounit:	iounit set if non-NULL. This is the maximum size for a single read or write if not 0.
@@ -540,7 +548,7 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
  *                              currently, ganesha sets this to 0 anyway.
  * @return 0 on success, errno value on error.
  */
-int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, uint32_t *iounit);
+int p9p_lopen(struct p9_fid *fid, uint32_t flags, uint32_t *iounit);
 
 /**
  * @brief Create a new file and open it.
@@ -550,7 +558,6 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
  * size[4] Tlcreate tag[2] fid[4] name[s] flags[4] mode[4] gid[4]
  * size[4] Rlcreate tag[2] qid[13] iounit[4]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in,out] fid:		fid of the directory where to create the new file.
  *				Will be the created file's on success
  * @param[in]     name:		name of the new file
@@ -560,7 +567,28 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
  * @param[out]    iounit:	iounit to set if non-NULL
  * @return 0 on success, errno value on error.
  */
-int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
+int p9p_lcreate(struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
+               uint32_t gid, uint32_t *iounit);
+
+
+/**
+ * @brief Create a new file and open it.
+ * This will fail if the file already exists.
+ *
+ *
+ * size[4] Tlcreate tag[2] fid[4] name[s] flags[4] mode[4] gid[4]
+ * size[4] Rlcreate tag[2] qid[13] iounit[4]
+ *
+ * @param[in,out] pfid:		fid of the directory where to create the new file.
+ *				Will be the created file's on success
+ * @param[in]     name:		name of the new file
+ * @param[in]     flags:	Linux kernel intent bits (e.g. O_RDONLY, O_WRONLY, O_RDWR)
+ * @param[in]     mode:		Linux creat(2) mode bits (e.g. 0640)
+ * @param[in]     gid:		effective gid
+ * @param[out]    iounit:	iounit to set if non-NULL
+ * @return 0 on success, errno value on error.
+ */
+int p9c_lcreate(struct p9_fid **pfid, char *name, uint32_t flags, uint32_t mode,
                uint32_t gid, uint32_t *iounit);
 
 #define P9_ROOM_TSYMLINK (P9_STD_HDR_SIZE + 4 + 2 + 2 + 4 )
@@ -571,7 +599,6 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
  * size[4] Tsymlink tag[2] dfid[4] name[s] symtgt[s] gid[4]
  * size[4] Rsymlink tag[2] qid[13]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     dfid:		fid of the directory where the new symlink will be created
  * @param[in]     name:		name of the link
  * @param[in]     symtgt:	link target
@@ -579,7 +606,7 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
  * @param[out]    qid:		qid to fill if non-NULL
  * @return 0 on success, errno value on error.
  */
-int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, char *symtgt, uint32_t gid,
+int p9p_symlink(struct p9_fid *dfid, char *name, char *symtgt, uint32_t gid,
                struct p9_qid *qid);
 
 /**
@@ -589,7 +616,6 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
  * size[4] Tmknod tag[2] dfid[4] name[s] mode[4] major[4] minor[4] gid[4]
  * size[4] Rmknod tag[2] qid[13]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     dfid:		fid of the directory where to create the node
  * @param[in]     name:		name of the node
  * @param[in]     mode:		Linux mknod(2) mode bits.
@@ -599,7 +625,7 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
  * @param[out]    qid:		qid to fill if non-NULL
  * @return 0 on success, errno value on error.
  */
-int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode, uint32_t major, uint32_t minor,
+int p9p_mknod(struct p9_fid *dfid, char *name, uint32_t mode, uint32_t major, uint32_t minor,
              uint32_t gid, struct p9_qid *qid);
 
 /**
@@ -609,13 +635,12 @@ int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
  * size[4] Trename tag[2] fid[4] dfid[4] name[s]
  * size[4] Rrename tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		source fid
  * @param[in]     dfid:		destination directory
  * @param[in]     name:		destination name
  * @return 0 on success, errno value on error.
  */
-int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfid, char *name);
+int p9p_rename(struct p9_fid *fid, struct p9_fid *dfid, char *name);
 
 /**
  * @brief zero-copy readlink.
@@ -624,13 +649,12 @@ int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *d
  * size[4] Treadlink tag[2] fid[4]
  * size[4] Rreadlink tag[2] target[s]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid of the link
  * @param[out]    ztarget:	content of the link
  * @param[out]    pdata:	pointer to data we need to put back (p9pz_readlink_put)
  * @return read size if >=0 on success (it was truncated if return value > size argument), -errno value on error.
  */
-int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarget, msk_data_t **pdata);
+int p9pz_readlink(struct p9_fid *fid, char **ztarget, msk_data_t **pdata);
 
 #define p9pz_readlink_put(p9_handle, data) p9c_putreply(p9_handle, data)
 
@@ -641,13 +665,12 @@ int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarge
  * size[4] Treadlink tag[2] fid[4]
  * size[4] Rreadlink tag[2] target[s]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid of the link
  * @param[out]    target:	content of the link
  * @param[in]     size:		size of the target buffer
  * @return read size if >=0 on success (it was truncated if return value > size argument), -errno value on error.
  */
-int p9p_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char *target, uint32_t size);
+int p9p_readlink(struct p9_fid *fid, char *target, uint32_t size);
 
 
 /**
@@ -661,12 +684,11 @@ int p9p_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char *target, 
  *                  ctime_sec[8] ctime_nsec[8] btime_sec[8] btime_nsec[8]
  *                  gen[8] data_version[8]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to getattr
  * @param[in,out] attr:		attr to fill. must NOT be NULL.
  * @return 0 on success, errno value on error.
  */
-int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getattr *attr);
+int p9p_getattr(struct p9_fid *fid, struct p9_getattr *attr);
 
 
 /**
@@ -677,12 +699,11 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
  *                  atime_sec[8] atime_nsec[8] mtime_sec[8] mtime_nsec[8]
  * size[4] Rsetattr tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to setattr
  * @param[in]     attr:		attr to set. mind attr->valid.
  * @return 0 on success, errno value on error.
  */
-int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setattr *attr);
+int p9p_setattr(struct p9_fid *fid, struct p9_setattr *attr);
 
 
 /**
@@ -695,14 +716,33 @@ int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setat
  * size[4] Txattrwalk tag[2] fid[4] newfid[4] name[s]
  * size[4] Rxattrwalk tag[2] size[8]
  *
- * @param[in]     p9_handle:	connection handle
+ * @param[in]     fid:		fid to clone
+ * @param[in]     newfid:	newfid where xattr will be readable
+ * @param[in]     name:		name of xattr to read, or NULL for the list
+ * @param[out] 	  psize:	size available for reading
+ * @return 0 on success, errno value on error.
+ */
+int p9p_xattrwalk(struct p9_fid *fid, struct p9_fid *newfid, char *name, uint64_t *psize);
+
+
+
+/**
+ * @brief get a new fid to read/write given attr (or get the list)
+ *
+ *
+ * Allocate a new fid to read the content of xattr name from fid
+ * if name is NULL or empty, content will be the list of xattrs
+ *
+ * size[4] Txattrwalk tag[2] fid[4] newfid[4] name[s]
+ * size[4] Rxattrwalk tag[2] size[8]
+ *
  * @param[in]     fid:		fid to clone
  * @param[out]    pnewfid:	newfid where xattr will be readable
  * @param[in]     name:		name of xattr to read, or NULL for the list
  * @param[out] 	  psize:	size available for reading
  * @return 0 on success, errno value on error.
  */
-int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid **pnewfid, char *name, uint64_t *psize);
+int p9c_xattrwalk(struct p9_fid *fid, struct p9_fid **pnewfid, char *name, uint64_t *psize);
 
 
 /**
@@ -713,14 +753,13 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
  * size[4] Txattrcreate tag[2] fid[4] name[s] attr_size[8] flags[4]
  * size[4] Rxattrcreate tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to use
  * @param[in]     name:		name of xattr to create
  * @param[in]     size:		size of the xattr that will be written
  * @param[in]     flags:	flags (derifed from linux setxattr flags: XATTR_CREATE, XATTR_REPLACE)
  * @return 0 on success, errno value on error.
  */
-int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint64_t size, uint32_t flags);
+int p9p_xattrcreate(struct p9_fid *fid, char *name, uint64_t size, uint32_t flags);
 
 
 /* size[4] Rreaddir tag[2] count[4] data[count] */
@@ -733,7 +772,6 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
  * size[4] Rreaddir tag[2] count[4] data[count]
  *   data is: qid[13] offset[8] type[1] name[s]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		directory fid
  * @param[in,out] poffset:	offset to start from, will be set to where we left off on return
  * @param[in]     callback:	callback to call for each entry.
@@ -741,7 +779,7 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
  * @param[in]     callback_arg:	user-provided callback arg
  * @return 0 on eod, number of entires read if positive, -errno value on error (or callback return value)
  */
-int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffset, p9p_readdir_cb callback, void *callback_arg);
+int p9p_readdir(struct p9_fid *fid, uint64_t *poffset, p9p_readdir_cb callback, void *callback_arg);
 
 /**
  * @brief fsync
@@ -750,11 +788,10 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
  * size[4] Tfsync tag[2] fid[4]
  * size[4] Rfsync tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to fsync
  * @return 0 on success, errno value on error.
  */
-int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid);
+int p9p_fsync(struct p9_fid *fid);
 
 /* Bit values for lock flags. */
 #define P9_LOCK_FLAGS_BLOCK 1
@@ -771,7 +808,6 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid);
  * size[4] Tlock tag[2] fid[4] type[1] flags[4] start[8] length[8] proc_id[4] client_id[s]
  * size[4] Rlock tag[2] status[1]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to lock
  * @param[in]     type:		lock type (F_RDLCK, F_WRLCK, F_UNLCK)
  * @param[in]     flags:	flag bits are P9_LOCK_FLAGS_BLOCK or RECLAIM
@@ -780,7 +816,7 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid);
  * @param[in]     proc_id:	PID of process blocking our lock
  * @return 0 on success, errno value on error. EACCESS on error, EAGAIN on lock held or grace period
  */
-int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint32_t flags, uint64_t start, uint64_t length, uint32_t proc_id);
+int p9p_lock(struct p9_fid *fid, uint8_t type, uint32_t flags, uint64_t start, uint64_t length, uint32_t proc_id);
 
 /**
  * @brief getlock tests for the existence of a POSIX record lock and has semantics similar to Linux fcntl(F_GETLK).
@@ -792,7 +828,6 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
  * size[4] Tgetlock tag[2] fid[4] type[1] start[8] length[8] proc_id[4] client_id[s]
  * size[4] Rgetlock tag[2] type[1] start[8] length[8] proc_id[4] client_id[s]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		fid to get lock on
  * @param[in]     ptype:	lock type (F_RDLCK, F_WRLCK, F_UNLCK)
  * @param[in]     pstart:	Starting offset for lock
@@ -800,7 +835,7 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
  * @param[in]     pproc_id:	PID of process blocking our lock
  * @return 0 on success, errno value on error.
  */
-int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype, uint64_t *pstart, uint64_t *plength, uint32_t *pproc_id);
+int p9p_getlock(struct p9_fid *fid, uint8_t *ptype, uint64_t *pstart, uint64_t *plength, uint32_t *pproc_id);
 
 /**
  * @brief link
@@ -809,13 +844,12 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
  * size[4] Tlink tag[2] dfid[4] fid[4] name[s]
  * size[4] Rlink tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     fid:		link target
  * @param[in]     dfid:		fid of the directory where the new link will be created
  * @param[in]     name:		name of the link
  * @return 0 on success, errno value on error.
  */
-int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfid, char *name);
+int p9p_link(struct p9_fid *fid, struct p9_fid *dfid, char *name);
 
 /**
  * @brief mkdir
@@ -824,7 +858,6 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
  * size[4] Tmkdir tag[2] dfid[4] name[s] mode[4] gid[4]
  * size[4] Rmkdir tag[2] qid[13]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     dfid:		fid of the directory where the new directory will be created
  * @param[in]     name:		name of the link
  * @param[in]     mode:		creation mode
@@ -832,7 +865,7 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
  * @param[out]    qid:		qid to fill if non-NULL
  * @return 0 on success, errno value on error.
  */
-int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode, uint32_t gid,
+int p9p_mkdir(struct p9_fid *dfid, char *name, uint32_t mode, uint32_t gid,
                struct p9_qid *qid);
 
 /**
@@ -842,14 +875,13 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
  * size[4] Trenameat tag[2] olddirfid[4] oldname[s] newdirfid[4] newname[s]
  * size[4] Rrenameat tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     dfid:		fid of the directory where file currently is
  * @param[in]     name:		current filename
  * @param[in]     newdfid:	fid of the directory to move into
  * @param[in]     newname:	new filename
  * @return 0 on success, errno value on error.
  */
-int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, struct p9_fid *newdfid, char *newname);
+int p9p_renameat(struct p9_fid *dfid, char *name, struct p9_fid *newdfid, char *newname);
 
 /**
  * @brief unlink file by name
@@ -858,13 +890,12 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
  * size[4] Tunlinkat tag[2] dirfid[4] name[s] flags[4]
  * size[4] Runlinkat tag[2]
  *
- * @param[in]     p9_handle:	connection handle
  * @param[in]     dfid:		fid of the directory where file currently is
  * @param[in]     name:		name of file to unlink
  * @param[in]     flags:	unlink flags, unused by server?
  * @return 0 on success, errno value on error.
  */
-int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t flags);
+int p9p_unlinkat(struct p9_fid *dfid, const char *name, uint32_t flags);
 
 /**
  * @}
@@ -979,7 +1010,7 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst);
  * @param[in]     path:		path of file to remove
  * @return 0 on success, errno value on error.
  */
-int p9l_rm(struct p9_fid *cwd, char *path);
+int p9l_rm(struct p9_fid *cwd, const char *path);
 
 /**
  * @brief mkdir by fid
@@ -1155,7 +1186,7 @@ static inline int p9l_fchown(struct p9_fid *fid, uint32_t uid, uint32_t gid) {
 	attr.valid = P9_SETATTR_UID | P9_SETATTR_GID;
 	attr.uid = uid;
 	attr.gid = gid;
-	return p9p_setattr(fid->p9_handle, fid, &attr);
+	return p9p_setattr(fid, &attr);
 }
 
 /**
@@ -1170,7 +1201,7 @@ static inline int p9l_fchmod(struct p9_fid *fid, uint32_t mode) {
 	memset(&attr, 0, sizeof(struct p9_setattr));
 	attr.valid = P9_SETATTR_MODE;
 	attr.mode = mode;
-	return p9p_setattr(fid->p9_handle, fid, &attr);
+	return p9p_setattr(fid, &attr);
 }
 
 /**
@@ -1181,7 +1212,7 @@ static inline int p9l_fchmod(struct p9_fid *fid, uint32_t mode) {
  * @return 0 on success, errno value on error.
  */
 static inline int p9l_fstat(struct p9_fid *fid, struct p9_getattr *attr) {
-	return p9p_getattr(fid->p9_handle, fid, attr);
+	return p9p_getattr(fid, attr);
 }
 
 /**
@@ -1191,7 +1222,7 @@ static inline int p9l_fstat(struct p9_fid *fid, struct p9_getattr *attr) {
  * @return 0 on success, errno value on error.
  */
 static inline int p9l_fsync(struct p9_fid *fid) {
-	return p9p_fsync(fid->p9_handle, fid);
+	return p9p_fsync(fid);
 }
 
 
@@ -1207,14 +1238,12 @@ int p9l_fseek(struct p9_fid *fid, int64_t offset, int whence);
 
 /**
  * @brief get current offset
- * same as fid->offset
+ * gets fid->offset
  *
  * @param[in]     fid:		fid to use
  * @return 0 on success, errno value on error.
  */
-static inline uint64_t p9l_ftell(struct p9_fid *fid) {
-	return fid->offset;
-}
+uint64_t p9l_ftell(struct p9_fid *fid);
 
 /**
  * @brief write stuff!
@@ -1294,6 +1323,13 @@ ssize_t p9l_createtree(struct p9_fid *cwd, char *name, int depth, int dwidth, in
  * @return number of entries (dir+files) removed on success, -errno value on error
  */
 ssize_t p9l_rmrf(struct p9_fid *cwd, char *path);
+
+/**
+ * @brief print what we know about this fid (fid no, path, etc)
+ *
+ * @param[in]     fid:		fid to print
+ */
+void p9l_printfid(struct p9_fid *fid);
 
 /**
  * @}

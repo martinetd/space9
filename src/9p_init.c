@@ -268,10 +268,14 @@ void p9_destroy(struct p9_handle **pp9_handle) {
 	struct p9_handle *p9_handle = *pp9_handle;
 	if (p9_handle) {
 		if (p9_handle->cwd) {
-			p9p_clunk(p9_handle, &p9_handle->cwd);
+			p9l_clunk(&p9_handle->cwd);
 		}
 		if (p9_handle->root_fid) {
-			p9p_clunk(p9_handle, &p9_handle->root_fid);
+			int olddebug = p9_handle->debug;
+			p9_handle->debug |= P9_DEBUG_CORE;
+			rdx_iter(&p9_handle->root_fid->rdx_node, p9c_putfidcb);
+			p9_handle->debug = olddebug;
+			p9p_clunk(p9_handle->root_fid);
 		}
 		bitmap_destroy(&p9_handle->wdata_bitmap);
 		bitmap_destroy(&p9_handle->fids_bitmap);
@@ -395,10 +399,9 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		p9_handle->tags_bitmap = bitmap_init(p9_handle->max_tag);
 		p9_handle->fids_bucket = bucket_init(p9_handle->max_fid/8, sizeof(struct p9_fid));
 		p9_handle->tags = calloc(1, p9_handle->max_tag * sizeof(struct p9_tag));
-		p9_handle->fids = calloc(1, p9_handle->max_fid * sizeof(void*));
 		if (p9_handle->wdata_bitmap == NULL || p9_handle->fids_bitmap == NULL ||
 		    p9_handle->tags_bitmap == NULL || p9_handle->fids_bucket == NULL ||
-		    p9_handle->tags == NULL || p9_handle->fids == NULL) {
+		    p9_handle->tags == NULL) {
 			rc = ENOMEM;
 			break;
 		}
@@ -418,9 +421,7 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		if (rc)
 			break;
 
-		rc = p9p_walk(p9_handle, p9_handle->root_fid, NULL, &p9_handle->cwd);
-		if (rc)
-			break;
+		p9_handle->cwd = p9_handle->root_fid;
 
 	} while (0);
 

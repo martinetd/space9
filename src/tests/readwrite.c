@@ -89,16 +89,16 @@ static void *readwritethr(void* arg) {
 		p9l_fseek(fid, 0, SEEK_SET);
 		do {
 			rc = p9l_write(fid, buffer, thrarg->chunksize);
-		} while (rc > 0 && thrarg->totalsize > fid->offset);
+		} while (rc > 0 && thrarg->totalsize > p9l_ftell(fid));
 		if (rc < 0) {
 			rc = -rc;
-			printf("write failed at offset %"PRIu64", error: %s (%d)\n", fid->offset, strerror(rc), rc);
+			printf("write failed at offset %"PRIu64", error: %s (%d)\n", p9l_ftell(fid), strerror(rc), rc);
 			pthread_barrier_wait(&thrarg->barrier);
 			break;
 		}
-		rc = p9p_fsync(p9_handle, fid);
+		rc = p9p_fsync(fid);
 		if (rc) {
-			printf("couldn't fsync file %s. error: %s (%d)\n", fid->path, strerror(rc), rc);
+			printf("couldn't fsync file %s. error: %s (%d)\n", filename, strerror(rc), rc);
 			pthread_barrier_wait(&thrarg->barrier);
 			break;
 		}
@@ -113,10 +113,10 @@ static void *readwritethr(void* arg) {
 		p9l_fseek(fid, 0, SEEK_SET);
 		do {
 			rc = p9l_read(fid, buffer, thrarg->chunksize);
-		} while (rc > 0 && thrarg->totalsize > fid->offset);
+		} while (rc > 0 && thrarg->totalsize > p9l_ftell(fid));
 		if (rc < 0) {
 			rc = -rc;
-			printf("read failed at offset %"PRIu64", error: %s (%d)\n", fid->offset, strerror(rc), rc);
+			printf("read failed at offset %"PRIu64", error: %s (%d)\n", p9l_ftell(fid), strerror(rc), rc);
 			break;
 		} else
 			rc = 0;
@@ -126,7 +126,7 @@ static void *readwritethr(void* arg) {
 	} while (0);
 
 	if (fid) {
-		tmprc = p9p_clunk(p9_handle, &fid);
+		tmprc = p9l_clunk(&fid);
 		if (tmprc) {
 			printf("clunk failed, rc: %s (%d)\n", strerror(tmprc), tmprc);
 		}

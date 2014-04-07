@@ -51,27 +51,26 @@ int p9l_walk(struct p9_fid *dfid, char *path, struct p9_fid **pfid, int flags) {
 				data = NULL;
 			}
 			if (tmp_fid) {
-				p9p_clunk(p9_handle, &tmp_fid);
-				tmp_fid = NULL;
+				p9l_clunk(&tmp_fid);
 			}
 			tmp_fid = fid;
 
-			rc = p9p_lopen(p9_handle, fid, O_RDONLY, NULL);
+			rc = p9p_lopen(fid, O_RDONLY, NULL);
 			if (rc)
 				break;
-			rc = p9pz_readlink(p9_handle, fid, &readlink, &data);
+			rc = p9pz_readlink(fid, &readlink, &data);
 			if (rc > 0 && readlink[0] != '/') {
 				/* walk into link directory if path is relative from link */
 				path_basename(path, &basename);
 				if (path != basename) {
 					basename--;
 					basename[0] = '\0';
-					rc = p9p_walk(p9_handle, (path[0] == '/' ? p9_handle->root_fid : dfid), path, &tmp_dfid);
+					rc = p9c_walk((path[0] == '/' ? p9_handle->root_fid : dfid), path, &tmp_dfid);
 					basename[0] = '/';
 					if (rc)
 						break;
 					if (clunkdir)
-						p9p_clunk(p9_handle, &dfid);
+						p9c_putfid(&dfid);
 					dfid = tmp_dfid;
 					clunkdir = 1;
 				}
@@ -85,7 +84,7 @@ int p9l_walk(struct p9_fid *dfid, char *path, struct p9_fid **pfid, int flags) {
 		}
 		if (!strncmp(path, p9_handle->aname, p9_handle->aname_len))
 			path += p9_handle->aname_len;
-		rc = p9p_walk(p9_handle, (path[0] != '/' ? dfid : p9_handle->root_fid), path, &fid);
+		rc = p9c_walk((path[0] != '/' ? dfid : p9_handle->root_fid), path, &fid);
 		if (rc)
 			break;
 
@@ -97,22 +96,24 @@ int p9l_walk(struct p9_fid *dfid, char *path, struct p9_fid **pfid, int flags) {
 
 	/* cleanup */
 	if (clunkdir) {
-		p9p_clunk(p9_handle, &dfid);
+		p9c_putfid(&dfid);
 	}
 	if (data) {
 		p9pz_readlink_put(p9_handle, data);
 	}
 	if (tmp_fid) {
-		p9p_clunk(p9_handle, &tmp_fid);
+		p9c_putfid(&tmp_fid);
 	}
 
 	if (rec == MAXSYMLINKS) {
 		rc = EMLINK;
-		p9p_clunk(p9_handle, &fid);
+		p9c_putfid(&fid);
 	}
 
-	if (!rc)
+	if (!rc) {
 		*pfid = fid;
+		INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "fid %p (%i, %s) newfid %p (%i, %s)", dfid, dfid->fid, dfid->fid_path, fid, fid->fid, fid->fid_path);
+	}
 
 	return rc;
 }
@@ -121,20 +122,26 @@ static inline int p9l_rootwalk(struct p9_handle *p9_handle, char *path, struct p
 }
 
 struct p9_fid *p9l_getcwd(struct p9_handle *p9_handle) {
-	return p9_handle->cwd;
+	if (p9c_takefid(p9_handle->cwd) != 0)
+		return NULL;
+	else
+		return p9_handle->cwd;
 }
+
 struct p9_fid *p9l_getroot(struct p9_handle *p9_handle) {
 	return p9_handle->root_fid;
 }
 
 int p9l_clunk(struct p9_fid **pfid) {
-	if (!pfid || !*pfid)
+	if (!pfid || !*pfid || !(*pfid)->p9_handle)
 		return EINVAL;
 
-	if ((*pfid)->fid == (*pfid)->p9_handle->root_fid->fid || (*pfid)->fid == (*pfid)->p9_handle->cwd->fid)
+	INFO_LOG((*pfid)->p9_handle->debug & P9_DEBUG_LIBC, "fid %p (%i, %s)", *pfid, (*pfid)->fid, (*pfid)->fid_path);
+
+	if ((*pfid)->fid == (*pfid)->p9_handle->root_fid->fid)
 		return 0;
 
-	return p9p_clunk((*pfid)->p9_handle, pfid);
+	return p9c_putfid(pfid);
 }
 
 int p9l_cd(struct p9_handle *p9_handle, char *path) {
@@ -149,9 +156,9 @@ int p9l_cd(struct p9_handle *p9_handle, char *path) {
 	if (!rc) {
 		if (fid->qid.type != P9_QTDIR) {
 			rc = ENOTDIR;
-			p9p_clunk(p9_handle, &fid);
+			p9c_putfid(&fid);
 		} else {
-			p9p_clunk(p9_handle, &p9_handle->cwd);
+			p9c_putfid(&p9_handle->cwd);
 			p9_handle->cwd = fid;
 		}
 	}
@@ -159,7 +166,7 @@ int p9l_cd(struct p9_handle *p9_handle, char *path) {
 	return rc;
 }
 
-int p9l_rm(struct p9_fid *fid, char *path) {
+int p9l_rm(struct p9_fid *fid, const char *path) {
 	struct p9_handle *p9_handle;
 	char *canon_path, *dirname, *basename;
 	struct p9_fid *dfid = NULL;
@@ -181,11 +188,11 @@ int p9l_rm(struct p9_fid *fid, char *path) {
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(fid, dirname, &dfid, 0);
 		if (!rc) {
-			rc = p9p_unlinkat(p9_handle, dfid, basename, 0);
+			rc = p9p_unlinkat(dfid, basename, 0);
 			p9l_clunk(&dfid);
 		}
 	} else {
-		rc = p9p_unlinkat(p9_handle, (relative ? fid : p9_handle->root_fid), basename, 0);
+		rc = p9p_unlinkat((relative ? fid : p9_handle->root_fid), basename, 0);
 	}
 
 	free(canon_path);
@@ -228,11 +235,11 @@ int p9l_mkdir(struct p9_fid *fid, char *path, uint32_t mode) {
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(fid, dirname, &dfid, 0);
 		if (!rc) {
-			rc = p9p_mkdir(p9_handle, dfid, basename, (mode ? mode : 0777) & ~p9_handle->umask, 0, NULL);
+			rc = p9p_mkdir(dfid, basename, (mode ? mode : 0777) & ~p9_handle->umask, 0, NULL);
 			p9l_clunk(&dfid);
 		}
 	} else {
-		rc = p9p_mkdir(p9_handle, (relative ? fid : p9_handle->root_fid), basename, (mode ? mode : 0777) & ~p9_handle->umask, 0, NULL);
+		rc = p9p_mkdir((relative ? fid : p9_handle->root_fid), basename, (mode ? mode : 0777) & ~p9_handle->umask, 0, NULL);
 	}
 
 	free(canon_path);
@@ -268,11 +275,11 @@ int p9l_symlink(struct p9_fid *cwd, char *target, char *linkname) {
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(cwd, dirname, &dfid, 0);
 		if (!rc) {
-			rc = p9p_symlink(p9_handle, dfid, basename, target, getegid(), NULL);
+			rc = p9p_symlink(dfid, basename, target, getegid(), NULL);
 			p9l_clunk(&dfid);
 		}
 	} else {
-		rc = p9p_symlink(p9_handle, (relative ? cwd : p9_handle->root_fid), basename, target, getegid(), NULL);
+		rc = p9p_symlink((relative ? cwd : p9_handle->root_fid), basename, target, getegid(), NULL);
 	}
 
 	free(canon_path);
@@ -337,9 +344,9 @@ int p9l_link(struct p9_fid *cwd, char *target, char *linkname) {
 		if (linkname_basename[0] == '\0')
 			path_basename(target_canon_path, &linkname_basename);
 
-		rc = p9p_link(p9_handle, target_fid, linkname_fid, linkname_basename);
+		rc = p9p_link(target_fid, linkname_fid, linkname_basename);
 		if (rc) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "link failed with target fid %u (%s) to dir fid %u (%s), name %s, error: %s (%d)", target_fid->fid, target_fid->path, linkname_fid->fid, linkname_fid->path, linkname_basename, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "link failed with target fid %u (%s) to dir fid %u (%s), name %s, error: %s (%d)", target_fid->fid, target_fid->fid_path, linkname_fid->fid, linkname_fid->fid_path, linkname_basename, strerror(rc), rc);
 		}
 	} while (0);
 
@@ -413,9 +420,9 @@ int p9l_mv(struct p9_fid *cwd, char *src, char *dst) {
 		if (dst_basename[0] == '\0')
 			dst_basename = src_basename;
 
-		rc = p9p_renameat(p9_handle, src_fid, src_basename, dst_fid, dst_basename);
+		rc = p9p_renameat(src_fid, src_basename, dst_fid, dst_basename);
 		if (rc) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "renameat failed on dir fid %u (%s), name %s to dir fid %u (%s), name %s, error: %s (%d)", src_fid->fid, src_fid->path, src_basename, dst_fid->fid, dst_fid->path, dst_basename, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "renameat failed on dir fid %u (%s), name %s to dir fid %u (%s), name %s, error: %s (%d)", src_fid->fid, src_fid->fid_path, src_basename, dst_fid->fid, dst_fid->fid_path, dst_basename, strerror(rc), rc);
 		}
 	} while (0);
 
@@ -479,15 +486,15 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 			/* exists, open and truncate */
 			dst_fid = dst_dir_fid;
 			dst_dir_fid = NULL;
-			rc = p9p_lopen(p9_handle, dst_fid, O_WRONLY, NULL);
+			rc = p9p_lopen(dst_fid, O_WRONLY, NULL);
 			if (rc) {
-				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open existing file '%s', %s (%d)", dst_dir_fid->path, strerror(rc), rc);
+				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open existing file '%s', %s (%d)", dst_dir_fid->fid_path, strerror(rc), rc);
 				break;
 			}
 			memset(&attr, 0, sizeof(attr));
 			attr.valid = P9_SETATTR_SIZE;
 			attr.size = 0;
-			p9p_setattr(p9_handle, dst_fid, &attr);
+			p9p_setattr(dst_fid, &attr);
 		} else {
 			/* is a directory, open inside */
 			rc = p9l_open(dst_dir_fid, src_basename, &dst_fid, O_WRONLY | O_CREAT | O_TRUNC, 0666, 0);
@@ -500,17 +507,17 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 		/* copy stuff */
 		offset = 0;
 		do {
-			rc = p9pz_read(p9_handle, src_fid, p9_handle->msize, offset, &data);
+			rc = p9pz_read(src_fid, p9_handle->msize, offset, &data);
 			if (rc < 0) {
-				printf("read failed on fid %u (%s) at offset %"PRIu64"\n", src_fid->fid, src_fid->path, offset);
+				printf("read failed on fid %u (%s) at offset %"PRIu64"\n", src_fid->fid, src_fid->fid_path, offset);
 				rc = -rc;
 				break;
 			}
 			if (rc == 0)
 				break;
-			rc = p9pz_write(p9_handle, dst_fid, data, offset);
+			rc = p9pz_write(dst_fid, data, offset);
 			if (rc < 0) {
-				printf("write failed on fid %u (%s) at offset %"PRIu64"\n", dst_fid->fid, dst_fid->path, offset);
+				printf("write failed on fid %u (%s) at offset %"PRIu64"\n", dst_fid->fid, dst_fid->fid_path, offset);
 				rc = -rc;
 				break;
 			}
@@ -557,12 +564,12 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 				return EINVAL;
 			}
 
-			rc = p9p_walk(p9_handle, relative ? cwd : p9_handle->root_fid, dirname, &fid);
+			rc = p9l_walk(relative ? cwd : p9_handle->root_fid, dirname, &fid, 0);
 			if (rc) {
 				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot walk into parent dir '%s', %s (%d)", dirname, strerror(rc), rc);
 				break;
 			}
-			rc = p9p_lcreate(p9_handle, fid, basename, flags, (mode ? mode : 0666) & ~p9_handle->umask, gid, NULL);
+			rc = p9c_lcreate(&fid, basename, flags, (mode ? mode : 0666) & ~p9_handle->umask, gid, NULL);
 			if (rc) {
 				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot create file '%s' in '%s', %s (%d)", basename, dirname, strerror(rc), rc);
 				break;
@@ -572,7 +579,7 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 			break;
 		} else {
 			/* file exists, open and eventually truncate */
-			rc = p9p_lopen(p9_handle, fid, flags, NULL);
+			rc = p9p_lopen(fid, flags, NULL);
 			if (rc) {
 				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open existing file '%s', %s (%d)", canon_path, strerror(rc), rc);
 				break;
@@ -581,7 +588,7 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 				memset(&attr, 0, sizeof(attr));
 				attr.valid = P9_SETATTR_SIZE;
 				attr.size = 0;
-				p9p_setattr(p9_handle, fid, &attr);				
+				p9p_setattr(fid, &attr);
 			}
 		}
 		if (flags & O_APPEND) {
@@ -654,6 +661,9 @@ int p9l_fseek(struct p9_fid *fid, int64_t offset, int whence) {
 	int rc = 0;
 	struct p9_getattr attr;
 
+	if (!fid)
+		return EINVAL;
+
 	switch(whence) {
 		case SEEK_SET:
 			if (offset >= 0)
@@ -664,7 +674,7 @@ int p9l_fseek(struct p9_fid *fid, int64_t offset, int whence) {
 			break;
 		case SEEK_END:
 			attr.valid = P9_GETATTR_SIZE;
-			rc = p9p_getattr(fid->p9_handle, fid, &attr);
+			rc = p9p_getattr(fid, &attr);
 			if (!rc) {
 				fid->offset = attr.size + offset;
 			}
@@ -673,6 +683,13 @@ int p9l_fseek(struct p9_fid *fid, int64_t offset, int whence) {
 			rc = EINVAL;
 	}
 	return rc;
+}
+
+uint64_t p9l_ftell(struct p9_fid *fid) {
+	if (!fid)
+		return -1;
+
+	return fid->offset;
 }
 
 struct p9_wrpipe {
@@ -695,7 +712,7 @@ ssize_t p9l_write(struct p9_fid *fid, char *buffer, size_t count) {
 
 	if (count < 512*1024) { /* copy the buffer if it's less than 500k */
 		do {
-			rc = p9p_write(fid->p9_handle, fid, buffer + sent, count - sent, fid->offset);
+			rc = p9p_write(fid, buffer + sent, count - sent, fid->offset);
 			if (rc <= 0)
 				break;
 			fid->offset += rc;
@@ -724,7 +741,7 @@ ssize_t p9l_write(struct p9_fid *fid, char *buffer, size_t count) {
 
 			pipeline[tag_last % n_pipeline].data.data = buffer + sent;
 			pipeline[tag_last % n_pipeline].offset = fid->offset + sent;
-			rc = p9pz_write_send(fid->p9_handle, fid, &pipeline[tag_last % n_pipeline].data, fid->offset + sent, &pipeline[tag_last % n_pipeline].tag);
+			rc = p9pz_write_send(fid, &pipeline[tag_last % n_pipeline].data, fid->offset + sent, &pipeline[tag_last % n_pipeline].tag);
 			if (rc < 0)
 				break;
 			sent += pipeline[tag_last % n_pipeline].data.size;
@@ -742,7 +759,7 @@ ssize_t p9l_write(struct p9_fid *fid, char *buffer, size_t count) {
 					/* fall back to regular write /!\ NEEDS TESTING /!\ */
 					subsize = rc;
 					while (subsize < pipeline[tag_first % n_pipeline].data.size) {
-						rc = p9p_write(fid->p9_handle, fid, pipeline[tag_first % n_pipeline].data.data + subsize, pipeline[tag_first % n_pipeline].data.size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
+						rc = p9p_write(fid, pipeline[tag_first % n_pipeline].data.data + subsize, pipeline[tag_first % n_pipeline].data.size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
 						if (rc < 0)
 							break;
 						subsize += rc;
@@ -765,7 +782,7 @@ ssize_t p9l_write(struct p9_fid *fid, char *buffer, size_t count) {
 				/* fall back to regular write /!\ NEEDS TESTING /!\ */
 				subsize = rc;
 				while (subsize < pipeline[tag_first % n_pipeline].data.size) {
-					rc = p9p_write(fid->p9_handle, fid, pipeline[tag_first % n_pipeline].data.data + subsize, pipeline[tag_first % n_pipeline].data.size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
+					rc = p9p_write(fid, pipeline[tag_first % n_pipeline].data.data + subsize, pipeline[tag_first % n_pipeline].data.size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
 					if (rc < 0)
 						break;
 					subsize += rc;
@@ -779,7 +796,7 @@ ssize_t p9l_write(struct p9_fid *fid, char *buffer, size_t count) {
 		fid->offset += sent;
 	}
 	if (rc < 0) {
-		INFO_LOG(fid->p9_handle->debug & P9_DEBUG_LIBC, "write failed on file %s at offset %"PRIu64", error: %s (%zu)", fid->path, fid->offset, strerror(-rc), -rc);
+		INFO_LOG(fid->p9_handle->debug & P9_DEBUG_LIBC, "write failed on file %s at offset %"PRIu64", error: %s (%zu)", fid->fid_path, fid->offset, strerror(-rc), -rc);
 	} else {
 		rc = sent;
 	}
@@ -843,7 +860,7 @@ ssize_t p9l_read(struct p9_fid *fid, char *buffer, size_t count) {
 
 		pipeline[tag_last % n_pipeline].buf = buffer + total;
 		pipeline[tag_last % n_pipeline].offset = fid->offset + total;
-		rc = p9pz_read_send(fid->p9_handle, fid, pipeline[tag_last % n_pipeline].size, fid->offset + total, &pipeline[tag_last % n_pipeline].tag);
+		rc = p9pz_read_send(fid, pipeline[tag_last % n_pipeline].size, fid->offset + total, &pipeline[tag_last % n_pipeline].tag);
 		if (rc < 0)
 			break;
 		total += pipeline[tag_last % n_pipeline].size;
@@ -863,7 +880,7 @@ ssize_t p9l_read(struct p9_fid *fid, char *buffer, size_t count) {
 				/* fall back to regular read /!\ NEEDS TESTING /!\ */
 				subsize = rc;
 				while (subsize < pipeline[tag_first % n_pipeline].size) {
-					rc = p9p_read(fid->p9_handle, fid, pipeline[tag_first % n_pipeline].buf + subsize, pipeline[tag_first % n_pipeline].size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
+					rc = p9p_read(fid, pipeline[tag_first % n_pipeline].buf + subsize, pipeline[tag_first % n_pipeline].size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
 					if (rc < 0)
 						break;
 					subsize += rc;
@@ -888,7 +905,7 @@ ssize_t p9l_read(struct p9_fid *fid, char *buffer, size_t count) {
 			/* fall back to regular read /!\ NEEDS TESTING /!\ */
 			subsize = rc;
 			while (subsize < pipeline[tag_first % n_pipeline].size) {
-				rc = p9p_read(fid->p9_handle, fid, pipeline[tag_first % n_pipeline].buf + subsize, pipeline[tag_first % n_pipeline].size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
+				rc = p9p_read(fid, pipeline[tag_first % n_pipeline].buf + subsize, pipeline[tag_first % n_pipeline].size - subsize, pipeline[tag_first % n_pipeline].offset + subsize);
 				if (rc < 0)
 					break;
 				subsize += rc;
@@ -898,7 +915,7 @@ ssize_t p9l_read(struct p9_fid *fid, char *buffer, size_t count) {
 	}
 
 	if (rc < 0) {
-		INFO_LOG(fid->p9_handle->debug & P9_DEBUG_LIBC, "read failed on file %s at offset %"PRIu64", error: %s (%zu)", fid->path, fid->offset, strerror(-rc), -rc);
+		INFO_LOG(fid->p9_handle->debug & P9_DEBUG_LIBC, "read failed on file %s at offset %"PRIu64", error: %s (%zu)", fid->fid_path, fid->offset, strerror(-rc), -rc);
 	} else {
 		fid->offset += total;
 		rc = total;
@@ -950,20 +967,20 @@ ssize_t p9l_ls(struct p9_fid *cwd, char *path, p9p_readdir_cb cb, void *cb_arg) 
 
 	if (fid->qid.type == P9_QTDIR) {
 		do {
-			count = p9p_readdir(p9_handle, fid, &offset, cb, cb_arg);
+			count = p9p_readdir(fid, &offset, cb, cb_arg);
 			if (count > 0)
 				rc += count;
 		} while (count > 0);
 
 		if (count < 0) {
 			rc = count;
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "readdir failed on fid %u (%s): %s (%d)\n", cwd->fid, cwd->path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "readdir failed on fid %u (%s): %s (%d)\n", cwd->fid, cwd->fid_path, strerror(rc), rc);
 		}
 	} else {
 		rc = -ENOTDIR;
 	}
 
-	p9p_clunk(p9_handle, &fid);
+	p9c_putfid(&fid);
 	return rc;
 }
 
@@ -1017,7 +1034,7 @@ ssize_t p9l_fxattrget(struct p9_fid *fid, char *field, char *buf, size_t count) 
 	p9_handle = fid->p9_handle;
 
 	do {
-		rc = p9p_xattrwalk(p9_handle, fid, &attrfid, field, &size);
+		rc = p9c_xattrwalk(fid, &attrfid, field, &size);
 		if (rc) {
 			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "xattrwalk failed: %s (%zd)", strerror(rc), rc);
 			rc = -rc;
@@ -1040,7 +1057,7 @@ ssize_t p9l_fxattrget(struct p9_fid *fid, char *field, char *buf, size_t count) 
 		buf[realcount] = '\0';
 	} while (0);
 
-	p9p_clunk(p9_handle, &attrfid);
+	p9c_putfid(&attrfid);
 
 	return (rc < 0 ? rc : size);
 }
@@ -1055,14 +1072,14 @@ ssize_t p9l_fxattrset(struct p9_fid *fid, char *field, char *buf, size_t count, 
 	p9_handle = fid->p9_handle;
 
 	do {
-		rc = p9p_walk(p9_handle, fid, NULL, &attrfid);
+		rc = p9c_walk(fid, NULL, &attrfid);
 		if (rc) {
 			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "clone walk failed: %s (%zd)", strerror(rc), rc);
 			rc = -rc;
 			break;
 		}
 
-		rc = p9p_xattrcreate(p9_handle, attrfid, field, count, flags);
+		rc = p9p_xattrcreate(attrfid, field, count, flags);
 		if (rc) {
 			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "xattrcreate failed: %s (%zd)", strerror(rc), rc);
 			rc = -rc;
@@ -1082,7 +1099,7 @@ ssize_t p9l_fxattrset(struct p9_fid *fid, char *field, char *buf, size_t count, 
 		}
 	} while (0);
 
-	p9p_clunk(p9_handle, &attrfid);
+	p9c_putfid(&attrfid);
 
 	return rc;
 };
@@ -1107,14 +1124,14 @@ ssize_t p9l_readlink(struct p9_fid *cwd, char *path, char *buf, size_t buflen) {
 			break;
 		}
 
-		rc = p9p_lopen(p9_handle, fid, O_RDONLY, NULL);
+		rc = p9p_lopen(fid, O_RDONLY, NULL);
 		if (rc) {
 			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "lopen failed: %s (%zd)", strerror(-rc), -rc);
 			rc = -rc;
 			break;
 		}
 
-		rc = p9pz_readlink(p9_handle, fid, &readlink, &data);
+		rc = p9pz_readlink(fid, &readlink, &data);
 		if (rc > 0) {
 			memcpy(buf, readlink, MIN(rc, buflen));
 			p9pz_readlink_put(p9_handle, data);
@@ -1139,7 +1156,7 @@ static ssize_t p9l_createtree_rec(struct p9_fid *fid, int depth, int dwidth, int
 			snprintf(name, MAXNAMLEN, "dir.%i", i);
 			rc = p9l_mkdir(fid, name, 0);
 			if (rc && rc != EEXIST) {
-				printf("couldn't create directory %s in %s, error %s (%zd)\n", name, fid->path, strerror(rc), rc);
+				printf("couldn't create directory %s in %s, error %s (%zd)\n", name, fid->fid_path, strerror(rc), rc);
 				break;
 			} else if (rc == 0) {
 				nentries++;
@@ -1147,7 +1164,7 @@ static ssize_t p9l_createtree_rec(struct p9_fid *fid, int depth, int dwidth, int
 
 			rc = p9l_walk(fid, name, &newfid, 0);
 			if (rc) {
-				printf("couldn't go to directory %s in %s, error: %s (%zd)\n", name, fid->path, strerror(rc), rc);
+				printf("couldn't go to directory %s in %s, error: %s (%zd)\n", name, fid->fid_path, strerror(rc), rc);
 				break;
 			}
 			rc = p9l_createtree_rec(newfid, depth-1, dwidth, fwidth);
@@ -1164,7 +1181,7 @@ static ssize_t p9l_createtree_rec(struct p9_fid *fid, int depth, int dwidth, int
 		snprintf(name, MAXNAMLEN, "file.%i", i);
 		rc = p9l_open(fid, name, &newfid, O_CREAT | O_WRONLY, 0, 0);
 		if (rc && rc != EEXIST) {
-			printf("couldn't create file %s in %s, error: %s (%zd)\n", name, fid->path, strerror(rc), rc);
+			printf("couldn't create file %s in %s, error: %s (%zd)\n", name, fid->fid_path, strerror(rc), rc);
 			break;
 		}
 		if (rc == 0)
@@ -1185,7 +1202,7 @@ ssize_t p9l_createtree(struct p9_fid *cwd, char *path, int depth, int dwidth, in
 
 	rc = p9l_mkdir(cwd, path, 0);
 	if (rc && rc != EEXIST) {
-		INFO_LOG(cwd->p9_handle->debug & P9_DEBUG_LIBC, "couldn't create base directory %s in %s, error %s (%zd)", path, cwd->path, strerror(rc), rc);
+		INFO_LOG(cwd->p9_handle->debug & P9_DEBUG_LIBC, "couldn't create base directory %s in %s, error %s (%zd)", path, cwd->fid_path, strerror(rc), rc);
 		return -rc;
 	} else {
 		n = 1;
@@ -1193,7 +1210,7 @@ ssize_t p9l_createtree(struct p9_fid *cwd, char *path, int depth, int dwidth, in
 
 	rc = p9l_walk(cwd, path, &fid, 0);
 	if (rc) {
-		INFO_LOG(cwd->p9_handle->debug & P9_DEBUG_LIBC, "couldn't walk to base directory %s in %s, error %s (%zd)", path, cwd->path, strerror(rc), rc);
+		INFO_LOG(cwd->p9_handle->debug & P9_DEBUG_LIBC, "couldn't walk to base directory %s in %s, error %s (%zd)", path, cwd->fid_path, strerror(rc), rc);
 		return -rc;
 	}
 
@@ -1222,6 +1239,7 @@ struct cb_arg {
 };
 
 static int rd_cb(void *arg, struct p9_handle *p9_handle, struct p9_fid *dfid, struct p9_qid *qid, uint8_t type, uint16_t namelen, char *name) {
+	int rc;
 	struct cb_arg *cb_arg = arg;
 	struct nlist *n;
 
@@ -1248,7 +1266,10 @@ static int rd_cb(void *arg, struct p9_handle *p9_handle, struct p9_fid *dfid, st
 		n->next = cb_arg->tail;
 		cb_arg->tail = n;
 	} else {
-		p9p_unlinkat(p9_handle, dfid, name, 0);
+		rc = p9p_unlinkat(dfid, name, 0);
+		if (rc) {
+			printf("unlinkat failed: %d\n", rc);
+		}
 		cb_arg->count++;
 	}
 
@@ -1290,11 +1311,11 @@ ssize_t p9l_rmrf(struct p9_fid *cwd, char *path) {
 			}
 
 			if (fid->qid.type != P9_QTDIR) {
-				printf("%s not a directory?", fid->path);
+				printf("%s not a directory?", fid->fid_path);
 				break;
 			}
 
-			rc = p9p_lopen(p9_handle, fid, O_RDONLY, NULL);
+			rc = p9p_lopen(fid, O_RDONLY, NULL);
 			if (rc) {
 				printf("open failed, rc: %s (%d)\n", strerror(rc), rc);
 				break;
@@ -1305,16 +1326,18 @@ ssize_t p9l_rmrf(struct p9_fid *cwd, char *path) {
 		}
 
 		offset = 0LL;
-		rc = p9p_readdir(p9_handle, fid, &offset, rd_cb, &cb_arg);
+		rc = p9p_readdir(fid, &offset, rd_cb, &cb_arg);
 
 		if (rc == 2) {
 			rc = 0;
-			p9l_rm(p9_handle->root_fid, fid->path);
+			rc = p9p_unlinkat(p9_fid_parent(fid), fid->fid_path, 0);
+			if (rc)
+				printf("unlinkat failed: %d\n", rc);
 			cb_arg.count++;
-			p9p_clunk(p9_handle, &fid);
+			p9c_putfid(&fid);
 			nlist = cb_arg.tail;
 			cb_arg.tail = cb_arg.tail->next;
-			bucket_put(buck, (void **)&nlist);
+			bucket_put(buck, (void *)nlist);
 		} else if (rc > 0) {
 			rc = 0;
 		} else if (rc < 0) {
@@ -1328,4 +1351,27 @@ ssize_t p9l_rmrf(struct p9_fid *cwd, char *path) {
 	}
 
 	return (rc ? -rc : cb_arg.count);
+}
+
+
+static void p9li_printfid_path(struct p9_fid *fid, char **path, int *n) {
+	int rc;
+
+	if (fid->rdx_node.parent)
+		p9li_printfid_path(p9_rdx_fid(fid->rdx_node.parent), path, n);
+
+	if (*n > 1) {
+		rc = snprintf(*path, *n, fid->fid_path);
+		*n -= rc;
+		*path += rc;
+	}
+}
+
+void p9l_printfid(struct p9_fid *fid) {
+	char path[MAXPATHLEN], *curpath = path;
+	int n = 0;
+
+	p9li_printfid_path(fid, &curpath, &n);
+
+	printf("fid %p (%i, %p)\n", fid, fid->fid, path);
 }

@@ -45,6 +45,7 @@ int verbose = 0;
 
 struct nlist {
 	char name[MAXNAMLEN];
+	int current;
 	struct p9_fid *pfid;
 	struct nlist *next;
 };
@@ -108,20 +109,22 @@ static void *walkthr(void* arg) {
 
 	while (rc == 0 && cb_arg.tail != NULL) {
 		if (cb_arg.tail->name[0] == '\0') {
-			p9p_clunk(p9_handle, &cb_arg.tail->pfid);
+			p9l_clunk(&cb_arg.tail->pfid);
 			nlist = cb_arg.tail;
 			cb_arg.tail = cb_arg.tail->next;
-			bucket_put(buck, (void **)&nlist);
+			bucket_put(buck, (void *)nlist);
 			continue;
 		}
 
-		rc = p9p_walk(p9_handle, cb_arg.tail->pfid, cb_arg.tail->name, &fid);
+		rc = p9l_walk(cb_arg.tail->pfid, cb_arg.tail->name, &fid, 0);
 		if (rc) {
 			printf("walk failed, rc: %s (%d)\n", strerror(rc), rc);
+			p9l_printfid(cb_arg.tail->pfid);
+			p9l_clunk(&cb_arg.tail->pfid);
 			break;
 		}
 
-		rc = p9p_lopen(p9_handle, fid, O_RDONLY, NULL);
+		rc = p9p_lopen(fid, O_RDONLY, NULL);
 		if (rc) {
 			printf("open failed, rc: %s (%d)\n", strerror(rc), rc);
 			break;
@@ -132,12 +135,14 @@ static void *walkthr(void* arg) {
 
 		offset = 0LL;
 		do {
-			rc = p9p_readdir(p9_handle, fid, &offset, rd_cb, &cb_arg);
+			rc = p9p_readdir(fid, &offset, rd_cb, &cb_arg);
 		} while (rc > 0);
 
 		if (rc) {
 			rc = -rc;
 			printf("readdir failed, rc: %s (%d)\n", strerror(rc), rc);
+			p9l_printfid(fid);
+			p9l_clunk(&fid);
 			break;
 		}
 	}
@@ -145,7 +150,7 @@ static void *walkthr(void* arg) {
 	if (rc)
 		printf("thread ended, rc=%d\n", rc);
 
-	pthread_exit(NULL);	
+	pthread_exit(NULL);
 }
 
 void print_help(char **argv) {

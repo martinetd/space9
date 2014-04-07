@@ -94,97 +94,25 @@ int p9p_version(struct p9_handle *p9_handle) {
 
 
 int p9p_auth(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pafid) {
-	int rc;
-	uint8_t msgtype;
-	msk_data_t *data;
-	uint16_t tag;
-	uint8_t *cursor;
-	struct p9_fid *fid;
-
-	/* Sanity check */
-	if (p9_handle == NULL || pafid == NULL)
-		return EINVAL;
-
-	tag = 0;
-	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
-		return rc;
-
-	rc = p9c_getfid(p9_handle, &fid);
-	if (rc) {
-		p9c_abortrequest(p9_handle, data, tag);
-		ERROR_LOG("not enough fids - failing auth");
-		return rc;
-	}
-
-	p9_initcursor(cursor, data->data, P9_TAUTH, tag);
-	p9_setvalue(cursor, fid->fid, uint32_t);
-	p9_setstr(cursor, 0, "");
-	p9_setstr(cursor, strlen(p9_handle->aname), p9_handle->aname);
-#ifdef ALLOW_UID_OVERRIDE
-	p9_setvalue(cursor, uid, uint32_t);
-#else
-	p9_setvalue(cursor, geteuid(), uint32_t);
-#endif
-	p9_setmsglen(cursor, data);
-
-	rc = p9c_sendrequest(p9_handle, data, tag);
-	if (rc != 0)
-		return rc;
-
-	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
-		return rc;
-
-	cursor = data->data;
-	p9_getheader(cursor, msgtype);
-	switch(msgtype) {
-		case P9_RAUTH:
-			p9_getqid(cursor, fid->qid);
-			strncpy(fid->path, "<afid>", 7);
-			fid->pathlen = 6;
-			*pafid = fid;
-			break;
-
-		case P9_RERROR:
-			p9c_putfid(p9_handle, &fid);
-			p9_getvalue(cursor, rc, uint32_t);
-			break;
-
-		default:
-			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TAUTH, tag);
-			p9c_putfid(p9_handle, &fid);
-			rc = EIO;
-	}
-
-	p9c_putreply(p9_handle, data);
-
-	return rc;
+	return ENOTSUP;
 }
 
 
-int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) {
+int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid *fid) {
 	int rc;
 	uint8_t msgtype;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t *cursor;
-	struct p9_fid *fid;
 
 	/* Sanity check */
-	if (p9_handle == NULL || pfid == NULL)
+	if (p9_handle == NULL || fid == NULL)
 		return EINVAL;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
 	if (rc != 0 || data == NULL)
 		return rc;
-
-	/* handle reconnection: if fid already exists, take the same fid */
-	if (*pfid)
-		fid = *pfid;
-	else
-		rc = p9c_getfid(p9_handle, &fid);
 
 	if (rc) {
 		p9c_abortrequest(p9_handle, data, tag);
@@ -217,19 +145,14 @@ int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) 
 	switch(msgtype) {
 		case P9_RATTACH:
 			p9_getqid(cursor, fid->qid);
-			strncpy(fid->path, "/", 2);
-			fid->pathlen = 1;
-			*pfid = fid;
 			break;
 
 		case P9_RERROR:
-			p9c_putfid(p9_handle, &fid);
 			p9_getvalue(cursor, rc, uint32_t);
 			break;
 
 		default:
 			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TATTACH, tag);
-			p9c_putfid(p9_handle, &fid);
 			rc = EIO;
 	}
 
@@ -291,111 +214,26 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag) {
 	return rc;
 }
 
-int p9p_rewalk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, uint32_t newfid_i) {
+int p9p_walk(struct p9_fid *fid, char *path, struct p9_fid *newfid) {
 	int rc;
-	msk_data_t *data;
-	uint16_t tag;
-	uint16_t nwname;
-	uint8_t msgtype;
-	uint8_t *cursor, *pnwname;
-	char *subpath, *curpath;
-
-	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || path == NULL)
-		return EINVAL;
-
-	tag = 0;
-	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
-		return rc;
-
-	p9_initcursor(cursor, data->data, P9_TWALK, tag);
-	p9_setvalue(cursor, fid->fid, uint32_t);
-	p9_setvalue(cursor, newfid_i, uint32_t);
-
-	/* clone or lookup ? */
-	if (!path || path[0] == '\0') {
-		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk clone fid %u (%s), newfid %u", fid->fid, fid->path, newfid_i);
-		p9_setvalue(cursor, 0, uint16_t);
-		nwname = 0;
-	} else {
-		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk from fid %u (%s) to %s, newfid %u", fid->fid, fid->path, path, newfid_i);
-
-		nwname = 0;
-		p9_savepos(cursor, pnwname, uint16_t);
-		curpath = path;
-		while ((subpath = strchr(curpath, '/')) != NULL) {
-			subpath[0] = '\0';
-			if (curpath != subpath) {
-				p9_setstr(cursor, subpath-curpath, curpath);
-				nwname += 1;
-			}
-			subpath[0] = '/';
-			curpath = subpath+1;
-		}
-
-		if (strnlen(curpath,MAXNAMLEN) > 0) {
-			p9_setstr(cursor, strnlen(curpath, MAXNAMLEN), curpath);
-			nwname += 1;
-		}
-		p9_setvalue(pnwname, nwname, uint16_t);
-	}
-
-	p9_setmsglen(cursor, data);
-
-	rc = p9c_sendrequest(p9_handle, data, tag);
-	if (rc != 0)
-		return rc;
-
-	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
-		return rc;
-
-	cursor = data->data;
-	p9_getheader(cursor, msgtype);
-	switch(msgtype) {
-		case P9_RWALK:
-			break;
-
-		case P9_RERROR:
-			p9_getvalue(cursor, rc, uint32_t);
-			break;
-
-		default:
-			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TWALK, tag);
-			rc = EIO;
-	}
-
-	p9c_putreply(p9_handle, data);
-
-	return rc;
-}
-
-int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct p9_fid **pnewfid) {
-	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint16_t nwname, nwqid;
 	uint8_t msgtype;
 	uint8_t *cursor, *pnwname;
 	char *subpath, *curpath;
-	struct p9_fid *newfid;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || pnewfid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL || newfid == NULL)
 		return EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
 	if (rc != 0 || data == NULL)
 		return rc;
-
-	rc = p9c_getfid(p9_handle, &newfid);
-	if (rc) {
-		p9c_abortrequest(p9_handle, data, tag);
-		ERROR_LOG("not enough fids - failing walk");
-		return rc;
-	}
 
 	p9_initcursor(cursor, data->data, P9_TWALK, tag);
 	p9_setvalue(cursor, fid->fid, uint32_t);
@@ -403,11 +241,11 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 
 	/* clone or lookup ? */
 	if (!path || path[0] == '\0') {
-		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk clone fid %u (%s), newfid %u", fid->fid, fid->path, newfid->fid);
+		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk clone fid %u (%s), newfid %u", fid->fid, fid->fid_path, newfid->fid);
 		p9_setvalue(cursor, 0, uint16_t);
 		nwname = 0;
 	} else {
-		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk from fid %u (%s) to %s, newfid %u", fid->fid, fid->path, path, newfid->fid);
+		INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "walk from fid %u (%s) to %s, newfid %u", fid->fid, fid->fid_path, path, newfid->fid);
 
 		nwname = 0;
 		p9_savepos(cursor, pnwname, uint16_t);
@@ -445,6 +283,7 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 		case P9_RWALK:
 			p9_getvalue(cursor, nwqid, uint16_t);
 			if (nwqid != nwname) {
+				ERROR_LOG("walk returned success but wrong number of components! oldfid %d, newfid %d, path %s", fid->fid, newfid->fid, path);
 				return EIO;
 			}
 			if (nwqid != 0) {
@@ -456,25 +295,15 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 			} else {
 				memcpy(&newfid->qid, &fid->qid, sizeof(struct p9_qid));
 			}
-			if (path && path[0] != '\0' && fid->pathlen < MAXPATHLEN-2) {
-				snprintf(newfid->path, MAXPATHLEN, "%s/%s", fid->path, path);
-				newfid->pathlen = path_canonicalizer(newfid->path);
-			} else {
-				memcpy(newfid->path, fid->path, fid->pathlen+1);
-				newfid->pathlen = fid->pathlen;
-			}
 
-			*pnewfid = newfid;
 			break;
 
 		case P9_RERROR:
-			p9c_putfid(p9_handle, &newfid);
 			p9_getvalue(cursor, rc, uint32_t);
 			break;
 
 		default:
 			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TWALK, tag);
-			p9c_putfid(p9_handle, &newfid);
 			rc = EIO;
 	}
 
@@ -484,17 +313,19 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 }
 
 
-int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
+int p9p_clunk(struct p9_fid *fid) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || pfid == NULL || *pfid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -502,10 +333,10 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TCLUNK, tag);
-	p9_setvalue(cursor, (*pfid)->fid, uint32_t);
+	p9_setvalue(cursor, fid->fid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "clunk on fid %u (%s)", (*pfid)->fid, (*pfid)->path);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "clunk on fid %u (%s)", fid->fid, fid->fid_path);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -533,79 +364,28 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 		p9c_putreply(p9_handle, data);
 	}
 
-	/* fid is invalid anyway */
-	p9c_putfid(p9_handle, pfid);
-
 	return rc;
 }
 
 
-int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid) {
+int p9p_remove(struct p9_fid **pfid) {
+	return ENOTSUP;
+}
+
+
+int p9p_lopen(struct p9_fid *fid, uint32_t flags, uint32_t *iounit) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || pfid == NULL || *pfid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
-
-	tag = 0;
-	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
-		return rc;
-
-	p9_initcursor(cursor, data->data, P9_TREMOVE, tag);
-	p9_setvalue(cursor, (*pfid)->fid, uint32_t);
-	p9_setmsglen(cursor, data);
-
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "remove on fid %u (%s)", (*pfid)->fid, (*pfid)->path);
-
-	rc = p9c_sendrequest(p9_handle, data, tag);
-	if (rc != 0)
-		return rc;
-
-	rc = p9c_getreply(p9_handle, &data, tag);
-
-	if (rc == 0 && data != NULL) {
-		cursor = data->data;
-		p9_getheader(cursor, msgtype);
-		switch(msgtype) {
-			case P9_RREMOVE:
-				/* nothing else */
-				break;
-
-			case P9_RERROR:
-				p9_getvalue(cursor, rc, uint32_t);
-				break;
-
-			default:
-				ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TREMOVE, tag);
-				rc = EIO;
-		}
-
-		p9c_putreply(p9_handle, data);
-	}
-
-	/* fid is invalid anyway */
-	p9c_putfid(p9_handle, pfid);
-
-	return rc;
-}
-
-
-int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, uint32_t *iounit) {
-	int rc;
-	msk_data_t *data;
-	uint16_t tag;
-	uint8_t msgtype;
-	uint8_t *cursor;
-
-	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL)
-		return EINVAL;
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -617,7 +397,7 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 	p9_setvalue(cursor, flags, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lopen on fid %u (%s), flags 0x%x", fid->fid, fid->path, flags);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lopen on fid %u (%s), flags 0x%x", fid->fid, fid->fid_path, flags);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -657,18 +437,20 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 }
 
 
-int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
+int p9p_lcreate(struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
                uint32_t gid, uint32_t *iounit) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || name == NULL || fid == NULL || strchr(name, '/') != NULL)
+	if (name == NULL || fid == NULL || fid->p9_handle == NULL || strchr(name, '/') != NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -685,7 +467,7 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 	p9_setvalue(cursor, gid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lcreate from fid %u (%s) to name %s, flag 0x%x, mode %u", fid->fid, fid->path, name, flags, mode);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lcreate from fid %u (%s) to name %s, flag 0x%x, mode %u", fid->fid, fid->fid_path, name, flags, mode);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -699,7 +481,6 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 	p9_getheader(cursor, msgtype);
 	switch(msgtype) {
 		case P9_RLCREATE:
-			fid->pathlen += snprintf(fid->path+fid->pathlen, MAXPATHLEN-fid->pathlen, "/%s", name);
 			if (flags & O_WRONLY)
 				fid->openflags = WRFLAG;
 			else if (flags & O_RDWR)
@@ -726,17 +507,20 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 }
 
 
-int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, char *symtgt, uint32_t gid,
+int p9p_symlink(struct p9_fid *dfid, char *name, char *symtgt, uint32_t gid,
                 struct p9_qid *qid) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || name == NULL || dfid == NULL || strchr(name, '/') != NULL || symtgt == NULL)
+	if (name == NULL || dfid == NULL || dfid->p9_handle == NULL || strchr(name, '/') != NULL || symtgt == NULL)
 		return EINVAL;
+
+	p9_handle = dfid->p9_handle;
 
 	if (P9_ROOM_TSYMLINK + strlen(name) + strlen(symtgt) > p9_handle->msize)
 		return ERANGE;
@@ -784,18 +568,20 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
 }
 
 
-int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode, uint32_t major, uint32_t minor,
+int p9p_mknod(struct p9_fid *dfid, char *name, uint32_t mode, uint32_t major, uint32_t minor,
              uint32_t gid, struct p9_qid *qid) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || name == NULL || dfid == NULL || strchr(name, '/') != NULL)
+	if (name == NULL || dfid == NULL || dfid->p9_handle == NULL || strchr(name, '/') != NULL)
 		return EINVAL;
 
+	p9_handle = dfid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -842,17 +628,19 @@ int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 }
 
 
-int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfid, char *name) {
+int p9p_rename(struct p9_fid *fid, struct p9_fid *dfid, char *name) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || dfid == NULL || name == NULL)
+	if (fid == NULL || dfid == NULL || fid->p9_handle == NULL || name == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -895,16 +683,19 @@ int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *d
 }
 
 
-int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarget, msk_data_t **pdata) {
+int p9pz_readlink(struct p9_fid *fid, char **ztarget, msk_data_t **pdata) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || ztarget == NULL || pdata == NULL || (fid->openflags & RDFLAG) == 0)
+	if (fid == NULL || fid->p9_handle == NULL || ztarget == NULL || pdata == NULL || (fid->openflags & RDFLAG) == 0)
 		return -EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 
 	tag = 0;
@@ -949,38 +740,40 @@ int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarge
 }
 
 
-int p9p_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char *target, uint32_t size) {
+int p9p_readlink(struct p9_fid *fid, char *target, uint32_t size) {
 	char *ztarget;
 	msk_data_t *data;
 	int rc;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || target == NULL)
+	if (target == NULL)
 		return -EINVAL;
 
-	rc = p9pz_readlink(p9_handle, fid, &ztarget, &data);
+	rc = p9pz_readlink(fid, &ztarget, &data);
 	if (rc >= 0) {
 		memcpy(target, ztarget, MIN(size-1, rc));
 		target[MIN(size-1,rc)] = '\0';
-		p9c_putreply(p9_handle, data);
+		p9c_putreply(fid->p9_handle, data);
 	}
 
 	return rc;
 }
 
 
-int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode,
+int p9p_mkdir(struct p9_fid *dfid, char *name, uint32_t mode,
                uint32_t gid, struct p9_qid *qid) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || name == NULL || dfid == NULL || strchr(name, '/') != NULL)
+	if (name == NULL || dfid == NULL || dfid->p9_handle == NULL || strchr(name, '/') != NULL)
 		return EINVAL;
 
+	p9_handle = dfid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -994,7 +787,7 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 	p9_setvalue(cursor, gid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "mkdir dfid %u (%s), name %s mode %u", dfid->fid, dfid->path, name, mode);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "mkdir dfid %u (%s), name %s mode %u", dfid->fid, dfid->fid_path, name, mode);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1027,9 +820,10 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 }
 
 
-int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffset,
+int p9p_readdir(struct p9_fid *fid, uint64_t *poffset,
                 p9p_readdir_cb callback, void *callback_arg) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint64_t offset;
 	uint32_t count, i;
@@ -1043,8 +837,10 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 	uint8_t *cursor, *start;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || (fid->openflags & RDFLAG) == 0)
+	if (fid == NULL || fid->p9_handle == NULL || (fid->openflags & RDFLAG) == 0)
 		return -EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1058,7 +854,7 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 	p9_setvalue(cursor, p9_handle->msize - P9_ROOM_RREADDIR - 1, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "readdir fid %u (%s), offset %#"PRIx64, fid->fid, fid->path, *poffset);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "readdir fid %u (%s), offset %#"PRIx64, fid->fid, fid->fid_path, *poffset);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1114,16 +910,18 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 }
 
 
-ssize_t p9pz_read_send(struct p9_handle *p9_handle, struct p9_fid *fid, size_t count, uint64_t offset, uint16_t *ptag) {
+ssize_t p9pz_read_send(struct p9_fid *fid, size_t count, uint64_t offset, uint16_t *ptag) {
 	ssize_t rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || count == 0 || (fid->openflags & RDFLAG) == 0)
+	if (fid == NULL || fid->p9_handle == NULL || count == 0 || (fid->openflags & RDFLAG) == 0)
 		return -EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1138,7 +936,7 @@ ssize_t p9pz_read_send(struct p9_handle *p9_handle, struct p9_fid *fid, size_t c
 	p9_setvalue(cursor, count, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "read fid %u (%s), offset %"PRIu64", count %zi", fid->fid, fid->path, offset, count);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "read fid %u (%s), offset %"PRIu64", count %zi", fid->fid, fid->fid_path, offset, count);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1183,48 +981,51 @@ ssize_t p9pz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t
 	return rc;
 }
 
-ssize_t p9pz_read(struct p9_handle *p9_handle, struct p9_fid *fid, size_t count, uint64_t offset, msk_data_t **pdata) {
+ssize_t p9pz_read(struct p9_fid *fid, size_t count, uint64_t offset, msk_data_t **pdata) {
 	ssize_t rc;
 	uint16_t tag;
 
 	if (pdata == NULL)
 		return -EINVAL;
 
-	rc = p9pz_read_send(p9_handle, fid, count, offset, &tag);
+	rc = p9pz_read_send(fid, count, offset, &tag);
 	if (rc)
 		return rc;
 
-	return p9pz_read_wait(p9_handle, pdata, tag);
+	return p9pz_read_wait(fid->p9_handle, pdata, tag);
 }
 
-ssize_t p9p_read(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset) {
+ssize_t p9p_read(struct p9_fid *fid, char *buf, size_t count, uint64_t offset) {
 	msk_data_t *data;
 	ssize_t rc;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || buf == NULL)
+	if (buf == NULL)
 		return -EINVAL;
 
-	rc = p9pz_read(p9_handle, fid, count, offset, &data);
+	rc = p9pz_read(fid, count, offset, &data);
 
 	if (rc >= 0) {
 		memcpy(buf, data->data, MIN(count, rc+1));
-		p9c_putreply(p9_handle, data);
+		p9c_putreply(fid->p9_handle, data);
 	}
 
 	return rc;
 }
 
 
-ssize_t p9pz_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, msk_data_t *data, uint64_t offset, uint16_t *ptag) {
+ssize_t p9pz_write_send(struct p9_fid *fid, msk_data_t *data, uint64_t offset, uint16_t *ptag) {
 	ssize_t rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *header_data;
 	uint16_t tag;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || data == NULL || data->size == 0 || (fid->openflags & WRFLAG) == 0)
+	if (fid == NULL || fid->p9_handle == NULL || data == NULL || data->size == 0 || (fid->openflags & WRFLAG) == 0)
 		return -EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &header_data, &tag);
@@ -1242,7 +1043,7 @@ ssize_t p9pz_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, msk_dat
 
 	header_data->next = data;
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "write tag %u,  fid %u (%s), offset %"PRIu64", count %u", tag, fid->fid, fid->path, offset, data->size);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "write tag %u,  fid %u (%s), offset %"PRIu64", count %u", tag, fid->fid, fid->fid_path, offset, data->size);
 
 	rc = p9c_sendrequest(p9_handle, header_data, tag);
 	if (rc != 0)
@@ -1286,26 +1087,29 @@ ssize_t p9pz_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 	return rc;
 }
 
-ssize_t p9pz_write(struct p9_handle *p9_handle, struct p9_fid *fid, msk_data_t *data, uint64_t offset) {
+ssize_t p9pz_write(struct p9_fid *fid, msk_data_t *data, uint64_t offset) {
 	ssize_t rc;
 	uint16_t tag;
 
-	rc = p9pz_write_send(p9_handle, fid, data, offset, &tag);
+	rc = p9pz_write_send(fid, data, offset, &tag);
 	if (rc)
 		return rc;
 
-	return p9pz_write_wait(p9_handle, tag);
+	return p9pz_write_wait(fid->p9_handle, tag);
 }
 
-ssize_t p9p_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset, uint16_t *ptag) {
+ssize_t p9p_write_send(struct p9_fid *fid, char *buf, size_t count, uint64_t offset, uint16_t *ptag) {
 	ssize_t rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || buf == NULL || count == 0 || (fid->openflags & WRFLAG) == 0)
+	if (fid == NULL || fid->p9_handle == NULL || buf == NULL || count == 0 || (fid->openflags & WRFLAG) == 0)
 		return -EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1323,7 +1127,7 @@ ssize_t p9p_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, char *bu
 	p9_setmsglen(cursor, data);
 
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "write fid %u (%s), offset %"PRIu64", count %zu", fid->fid, fid->path, offset, count);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "write fid %u (%s), offset %"PRIu64", count %zu", fid->fid, fid->fid_path, offset, count);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1365,40 +1169,35 @@ ssize_t p9p_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 	return rc;
 }
 
-ssize_t p9p_write(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, size_t count, uint64_t offset) {
+ssize_t p9p_write(struct p9_fid *fid, char *buf, size_t count, uint64_t offset) {
 	ssize_t rc;
 	uint16_t tag;
 
-	rc = p9p_write_send(p9_handle, fid, buf, count, offset, &tag);
+	rc = p9p_write_send(fid, buf, count, offset, &tag);
 	if (rc)
 		return rc;
 
-	return p9p_write_wait(p9_handle, tag);
+	return p9p_write_wait(fid->p9_handle, tag);
 }
 
-int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid **pnewfid, char *name, uint64_t *psize) {
+int p9p_xattrwalk(struct p9_fid *fid, struct p9_fid *newfid, char *name, uint64_t *psize) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
-	struct p9_fid *newfid;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || pnewfid == NULL || psize == NULL)
+	if (fid == NULL || fid->p9_handle == NULL || newfid == NULL || psize == NULL)
 		return EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
 	if (rc != 0 || data == NULL)
 		return rc;
-
-	rc = p9c_getfid(p9_handle, &newfid);
-	if (rc) {
-		p9c_abortrequest(p9_handle, data, tag);
-		ERROR_LOG("not enough fids - failing xattrwalk");
-		return rc;
-	}
 
 	p9_initcursor(cursor, data->data, P9_TXATTRWALK, tag);
 	p9_setvalue(cursor, fid->fid, uint32_t);
@@ -1424,17 +1223,14 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
 		case P9_RXATTRWALK:
 			p9_getvalue(cursor, *psize, uint64_t);
 			newfid->openflags = RDFLAG;
-			*pnewfid = newfid;
 			break;
 
 		case P9_RERROR:
-			p9c_putfid(p9_handle, &newfid);
 			p9_getvalue(cursor, rc, uint32_t);
 			break;
 
 		default:
 			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TXATTRWALK, tag);
-			p9c_putfid(p9_handle, &newfid);
 			rc = EIO;
 	}
 
@@ -1444,17 +1240,19 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
 }
 
 
-int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint64_t size, uint32_t flags) {
+int p9p_xattrcreate(struct p9_fid *fid, char *name, uint64_t size, uint32_t flags) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || name == NULL || fid == NULL)
+	if (name == NULL || fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1498,17 +1296,19 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
 }
 
 
-int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, struct p9_fid *newdfid, char *newname) {
+int p9p_renameat(struct p9_fid *dfid, char *name, struct p9_fid *newdfid, char *newname) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || dfid == NULL || name == NULL || newdfid == NULL || newname == NULL)
+	if (dfid == NULL || dfid->p9_handle == NULL || name == NULL || newdfid == NULL || newname == NULL)
 		return EINVAL;
 
+	p9_handle = dfid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1522,7 +1322,7 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
 	p9_setstr(cursor, strlen(newname), newname);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "renameat on dfid %u (%s) name %s to dfid %u (%s) name %s", dfid->fid, dfid->path, name, newdfid->fid, newdfid->path, newname);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "renameat on dfid %u (%s) name %s to dfid %u (%s) name %s", dfid->fid, dfid->fid_path, name, newdfid->fid, newdfid->fid_path, newname);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1554,17 +1354,19 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
 }
 
 
-int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t flags) {
+int p9p_unlinkat(struct p9_fid *dfid, const char *name, uint32_t flags) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || dfid == NULL || name == NULL)
+	if (dfid == NULL || dfid->p9_handle == NULL || name == NULL)
 		return EINVAL;
 
+	p9_handle = dfid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1577,7 +1379,7 @@ int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, u
 	p9_setvalue(cursor, flags, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "unlinkat on dfid %u (%s) name %s", dfid->fid, dfid->path, name);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "unlinkat on dfid %u (%s) name %s", dfid->fid, dfid->fid_path, name);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1609,16 +1411,19 @@ int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, u
 }
 
 
-int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getattr *attr) {
+int p9p_getattr(struct p9_fid *fid, struct p9_getattr *attr) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || attr == NULL)
+	if (fid == NULL || fid->p9_handle == NULL || attr == NULL)
 		return EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1634,7 +1439,7 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
 	p9_setvalue(cursor, attr->valid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "getattr on fid %u (%s), attr mask 0x%"PRIx64, fid->fid, fid->path, attr->valid);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "getattr on fid %u (%s), attr mask 0x%"PRIx64, fid->fid, fid->fid_path, attr->valid);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1689,16 +1494,19 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
 }
 
 
-int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setattr *attr) {
+int p9p_setattr(struct p9_fid *fid, struct p9_setattr *attr) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || attr == NULL || attr->valid == 0)
+	if (fid == NULL || fid->p9_handle == NULL || attr == NULL || attr->valid == 0)
 		return EINVAL;
+
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1718,7 +1526,7 @@ int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setat
 	p9_setvalue(cursor, 0LL, uint64_t); /* mtime_nsec */
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "setattr on fid %u (%s), attr mask 0x%"PRIx32, fid->fid, fid->path, attr->valid);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "setattr on fid %u (%s), attr mask 0x%"PRIx32, fid->fid, fid->fid_path, attr->valid);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1749,17 +1557,19 @@ int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setat
 }
 
 
-int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
+int p9p_fsync(struct p9_fid *fid) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1770,7 +1580,7 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
 	p9_setvalue(cursor, fid->fid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "fsync on fid %u (%s)", fid->fid, fid->path);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "fsync on fid %u (%s)", fid->fid, fid->fid_path);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1802,17 +1612,19 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
 }
 
 
-int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfid, char *name) {
+int p9p_link(struct p9_fid *fid, struct p9_fid *dfid, char *name) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || dfid == NULL || name == NULL)
+	if (fid == NULL || fid->p9_handle == NULL || dfid == NULL || name == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1825,7 +1637,7 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
 	p9_setstr(cursor, strlen(name), name);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "link from fid %u (%s) to dfid %u (%s), filename %s", fid->fid, fid->path, dfid->fid, dfid->path, name);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "link from fid %u (%s) to dfid %u (%s), filename %s", fid->fid, fid->fid_path, dfid->fid, dfid->fid_path, name);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1857,17 +1669,19 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
 }
 
 
-int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint32_t flags, uint64_t start, uint64_t length, uint32_t proc_id) {
+int p9p_lock(struct p9_fid *fid, uint8_t type, uint32_t flags, uint64_t start, uint64_t length, uint32_t proc_id) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1884,7 +1698,7 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
 	p9_setstr(cursor, strlen(p9_handle->hostname), p9_handle->hostname);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lock on fid %u (%s), type %u, flags 0x%x, start %"PRIu64", length %"PRIu64", proc_id %u", fid->fid, fid->path, type, flags, start, length, proc_id);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "lock on fid %u (%s), type %u, flags 0x%x, start %"PRIu64", length %"PRIu64", proc_id %u", fid->fid, fid->fid_path, type, flags, start, length, proc_id);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1934,17 +1748,19 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
 }
 
 
-int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype, uint64_t *pstart, uint64_t *plength, uint32_t *pproc_id) {
+int p9p_getlock(struct p9_fid *fid, uint8_t *ptype, uint64_t *pstart, uint64_t *plength, uint32_t *pproc_id) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL)
+	if (fid == NULL || fid->p9_handle == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -1960,7 +1776,7 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
 	p9_setstr(cursor, strlen(p9_handle->hostname), p9_handle->hostname);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "getlock on fid %u (%s), type %u, start %"PRIu64", length %"PRIu64", proc_id %u", fid->fid, fid->path, *ptype, *pstart, *plength, *pproc_id);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "getlock on fid %u (%s), type %u, start %"PRIu64", length %"PRIu64", proc_id %u", fid->fid, fid->fid_path, *ptype, *pstart, *plength, *pproc_id);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
@@ -1994,17 +1810,19 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
 	return rc;
 }
 
-int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats *fs_stats) {
+int p9p_statfs(struct p9_fid *fid, struct fs_stats *fs_stats) {
 	int rc;
+	struct p9_handle *p9_handle;
 	msk_data_t *data;
 	uint16_t tag;
 	uint8_t msgtype;
 	uint8_t *cursor;
 
 	/* Sanity check */
-	if (p9_handle == NULL || fid == NULL || fs_stats == NULL)
+	if (fid == NULL || fid->p9_handle == NULL || fs_stats == NULL)
 		return EINVAL;
 
+	p9_handle = fid->p9_handle;
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
@@ -2015,7 +1833,7 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
 	p9_setvalue(cursor, fid->fid, uint32_t);
 	p9_setmsglen(cursor, data);
 
-	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "statfs on fid %u (%s)", fid->fid, fid->path);
+	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "statfs on fid %u (%s)", fid->fid, fid->fid_path);
 
 	rc = p9c_sendrequest(p9_handle, data, tag);
 	if (rc != 0)
