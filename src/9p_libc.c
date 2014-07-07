@@ -161,7 +161,7 @@ int p9l_cd(struct p9_handle *p9_handle, char *path) {
 
 int p9l_rm(struct p9_fid *fid, char *path) {
 	struct p9_handle *p9_handle;
-	char *canon_path, *dirname, *basename;
+	char *split_path, *dirname, *basename;
 	struct p9_fid *dfid = NULL;
 	int rc, relative;
 
@@ -170,13 +170,12 @@ int p9l_rm(struct p9_fid *fid, char *path) {
 
 	p9_handle = fid->p9_handle;
 
-	canon_path = malloc(strlen(path)+1);
-	if (!canon_path)
+	split_path = malloc(strlen(path)+1);
+	if (!split_path)
 		return ENOMEM;
 
-	strcpy(canon_path, path);
-	path_canonicalizer(canon_path);
-	relative = path_split(canon_path, &dirname, &basename);
+	strcpy(split_path, path);
+	relative = path_split(split_path, &dirname, &basename);
 
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(fid, dirname, &dfid, 0);
@@ -188,7 +187,7 @@ int p9l_rm(struct p9_fid *fid, char *path) {
 		rc = p9p_unlinkat(p9_handle, (relative ? fid : p9_handle->root_fid), basename, 0);
 	}
 
-	free(canon_path);
+	free(split_path);
 	return rc;
 }
 
@@ -207,7 +206,7 @@ uint32_t p9l_pipeline(struct p9_handle *p9_handle, uint32_t pipeline) {
 
 int p9l_mkdir(struct p9_fid *fid, char *path, uint32_t mode) {
 	struct p9_handle *p9_handle;
-	char *canon_path, *dirname, *basename;
+	char *split_path, *dirname, *basename;
 	struct p9_fid *dfid = NULL;
 	int rc, relative;
 
@@ -217,13 +216,12 @@ int p9l_mkdir(struct p9_fid *fid, char *path, uint32_t mode) {
 
 	p9_handle = fid->p9_handle;
 
-	canon_path = malloc(strlen(path)+1);
-	if (!canon_path)
+	split_path = malloc(strlen(path)+1);
+	if (!split_path)
 		return ENOMEM;
 
-	strcpy(canon_path, path);
-	path_canonicalizer(canon_path);
-	relative = path_split(canon_path, &dirname, &basename);
+	strcpy(split_path, path);
+	relative = path_split(split_path, &dirname, &basename);
 
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(fid, dirname, &dfid, 0);
@@ -235,7 +233,7 @@ int p9l_mkdir(struct p9_fid *fid, char *path, uint32_t mode) {
 		rc = p9p_mkdir(p9_handle, (relative ? fid : p9_handle->root_fid), basename, (mode ? mode : 0777) & ~p9_handle->umask, 0, NULL);
 	}
 
-	free(canon_path);
+	free(split_path);
 	return rc;
 }
 
@@ -247,7 +245,7 @@ int p9l_mkdir(struct p9_fid *fid, char *path, uint32_t mode) {
 
 int p9l_symlink(struct p9_fid *cwd, char *target, char *linkname) {
 	struct p9_handle *p9_handle;
-	char *canon_path, *dirname, *basename;
+	char *split_path, *dirname, *basename;
 	struct p9_fid *dfid = NULL;
 	int rc, relative;
 
@@ -257,13 +255,12 @@ int p9l_symlink(struct p9_fid *cwd, char *target, char *linkname) {
 
 	p9_handle = cwd->p9_handle;
 
-	canon_path = malloc(strlen(linkname)+1);
-	if (!canon_path)
+	split_path = malloc(strlen(linkname)+1);
+	if (!split_path)
 		return ENOMEM;
 
-	strcpy(canon_path, linkname);
-	path_canonicalizer(canon_path);
-	relative = path_split(canon_path, &dirname, &basename);
+	strcpy(split_path, linkname);
+	relative = path_split(split_path, &dirname, &basename);
 
 	if (dirname[0] != '\0') {
 		rc = p9l_walk(cwd, dirname, &dfid, 0);
@@ -275,14 +272,13 @@ int p9l_symlink(struct p9_fid *cwd, char *target, char *linkname) {
 		rc = p9p_symlink(p9_handle, (relative ? cwd : p9_handle->root_fid), basename, target, getegid(), NULL);
 	}
 
-	free(canon_path);
+	free(split_path);
 	return rc;
 }
 
 int p9l_link(struct p9_fid *cwd, char *target, char *linkname) {
 	struct p9_handle *p9_handle;
-	char *target_canon_path;
-	char *linkname_canon_path, *linkname_dirname, *linkname_basename;
+	char *linkname_split_path = NULL, *linkname_dirname, *linkname_basename = NULL;
 	struct p9_fid *target_fid = NULL, *linkname_fid = NULL;
 	int rc, linkname_relative;
 
@@ -292,34 +288,27 @@ int p9l_link(struct p9_fid *cwd, char *target, char *linkname) {
 
 	p9_handle = cwd->p9_handle;
 
-	target_canon_path = malloc(strlen(target)+1);
-	linkname_canon_path = malloc(strlen(linkname)+1);
-
 	do {
-		if (!target_canon_path || !linkname_canon_path) {
-			rc = ENOMEM;
-			break;
-		}
-
-		strcpy(target_canon_path, target);
-		path_canonicalizer(target_canon_path);
-		rc = p9l_walk(cwd, target_canon_path, &target_fid, 0);
+		rc = p9l_walk(cwd, target, &target_fid, 0);
 		if (rc) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", target_canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", target, strerror(rc), rc);
 			break;
 		}
-
-		strcpy(linkname_canon_path, linkname);
-		path_canonicalizer(linkname_canon_path);
 
 		/* check if linkname is a directory first */
-		rc = p9l_walk(cwd, linkname_canon_path, &linkname_fid, 0);
+		rc = p9l_walk(cwd, linkname, &linkname_fid, 0);
 		if (rc != 0 && rc != ENOENT) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", linkname_canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", linkname, strerror(rc), rc);
 			break;
 		} else if (rc == ENOENT || linkname_fid->qid.type != P9_QTDIR) {
 			/* not a directory, walk to dirname instead */
-			linkname_relative = path_split(linkname_canon_path, &linkname_dirname, &linkname_basename);
+			linkname_split_path = malloc(strlen(linkname)+1);
+			if (!linkname_split_path) {
+				rc = ENOMEM;
+				break;
+			}
+			strcpy(linkname_split_path, linkname);
+			linkname_relative = path_split(linkname_split_path, &linkname_dirname, &linkname_basename);
 			if (linkname_dirname[0] != '\0') {
 				rc = p9l_walk(cwd, linkname_dirname, &linkname_fid, 0);
 				if (rc) {
@@ -331,11 +320,11 @@ int p9l_link(struct p9_fid *cwd, char *target, char *linkname) {
 			}
 		} else {
 			/* is a directory, use it. */
-			path_basename(target_canon_path, &linkname_basename);
+			path_basename(target, &linkname_basename);
 		}
 
-		if (linkname_basename[0] == '\0')
-			path_basename(target_canon_path, &linkname_basename);
+		if (linkname_basename == NULL || linkname_basename[0] == '\0')
+			path_basename(target, &linkname_basename);
 
 		rc = p9p_link(p9_handle, target_fid, linkname_fid, linkname_basename);
 		if (rc) {
@@ -345,15 +334,14 @@ int p9l_link(struct p9_fid *cwd, char *target, char *linkname) {
 
 	p9l_clunk(&target_fid);
 	p9l_clunk(&linkname_fid);
-	free(target_canon_path);
-	free(linkname_canon_path);
+	free(linkname_split_path);
 	return rc;
 }
 
 int p9l_mv(struct p9_fid *cwd, char *src, char *dst) {
 	struct p9_handle *p9_handle;
-	char *src_canon_path, *src_dirname, *src_basename;
-	char *dst_canon_path, *dst_dirname, *dst_basename;
+	char *src_split_path, *src_dirname, *src_basename;
+	char *dst_split_path, *dst_dirname, *dst_basename;
 	struct p9_fid *src_fid = NULL, *dst_fid = NULL;
 	int rc, src_relative, dst_relative;
 
@@ -363,18 +351,17 @@ int p9l_mv(struct p9_fid *cwd, char *src, char *dst) {
 
 	p9_handle = cwd->p9_handle;
 
-	src_canon_path = malloc(strlen(src)+1);
-	dst_canon_path = malloc(strlen(dst)+1);
+	src_split_path = malloc(strlen(src)+1);
+	dst_split_path = malloc(strlen(dst)+1);
 
 	do {
-		if (!src_canon_path || !dst_canon_path) {
+		if (!src_split_path || !dst_split_path) {
 			rc = ENOMEM;
 			break;
 		}
 
-		strcpy(src_canon_path, src);
-		path_canonicalizer(src_canon_path);
-		src_relative = path_split(src_canon_path, &src_dirname, &src_basename);
+		strcpy(src_split_path, src);
+		src_relative = path_split(src_split_path, &src_dirname, &src_basename);
 		if (src_dirname[0] != '\0') {
 			rc = p9l_walk(cwd, src_dirname, &src_fid, 0);
 			if (rc) {
@@ -385,17 +372,16 @@ int p9l_mv(struct p9_fid *cwd, char *src, char *dst) {
 			src_fid = src_relative ? cwd : p9_handle->root_fid;
 		}
 
-		strcpy(dst_canon_path, dst);
-		path_canonicalizer(dst_canon_path);
+		strcpy(dst_split_path, dst);
 
 		/* check if dst is a directory first */
-		rc = p9l_walk(cwd, dst_canon_path, &dst_fid, 0);
+		rc = p9l_walk(cwd, dst_split_path, &dst_fid, 0);
 		if (rc != 0 && rc != ENOENT) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", dst_canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", dst_split_path, strerror(rc), rc);
 			break;
 		} else if (rc == ENOENT || dst_fid->qid.type != P9_QTDIR) {
 			/* not a directory, walk to dirname instead */
-			dst_relative = path_split(dst_canon_path, &dst_dirname, &dst_basename);
+			dst_relative = path_split(dst_split_path, &dst_dirname, &dst_basename);
 			if (dst_dirname[0] != '\0') {
 				rc = p9l_walk(cwd, dst_dirname, &dst_fid, 0);
 				if (rc) {
@@ -421,15 +407,15 @@ int p9l_mv(struct p9_fid *cwd, char *src, char *dst) {
 
 	p9l_clunk(&src_fid);
 	p9l_clunk(&dst_fid);
-	free(src_canon_path);
-	free(dst_canon_path);
+	free(src_split_path);
+	free(dst_split_path);
 	return rc;
 }
 
 int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 	struct p9_handle *p9_handle;
-	char *src_canon_path, *src_dirname, *src_basename;
-	char *dst_canon_path;
+	char *src_split_path, *src_dirname, *src_basename;
+	char *dst_split_path;
 	struct p9_fid *src_fid = NULL, *dst_fid = NULL, *dst_dir_fid = NULL;
 	int rc;
 	msk_data_t *data;
@@ -442,37 +428,35 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 
 	p9_handle = cwd->p9_handle;
 
-	src_canon_path = malloc(strlen(src)+1);
-	dst_canon_path = malloc(strlen(dst)+1);
+	src_split_path = malloc(strlen(src)+1);
+	dst_split_path = malloc(strlen(dst)+1);
 
 	do {
-		if (!src_canon_path || !dst_canon_path) {
+		if (!src_split_path || !dst_split_path) {
 			rc = ENOMEM;
 			break;
 		}
 
-		strcpy(src_canon_path, src);
-		path_canonicalizer(src_canon_path);
+		strcpy(src_split_path, src);
 		rc = p9l_open(cwd, src, &src_fid, O_RDONLY, 0, 0);
 		if (rc) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", src_canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", src_split_path, strerror(rc), rc);
 			break;
 		}
-		path_split(src_canon_path, &src_dirname, &src_basename);
+		path_split(src_split_path, &src_dirname, &src_basename);
 
-		strcpy(dst_canon_path, dst);
-		path_canonicalizer(dst_canon_path);
+		strcpy(dst_split_path, dst);
 
 		/* check if dst is a directory first */
-		rc = p9l_walk(cwd, dst_canon_path, &dst_dir_fid, 0);
+		rc = p9l_walk(cwd, dst_split_path, &dst_dir_fid, 0);
 		if (rc != 0 && rc != ENOENT) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", dst_canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "walk failed to '%s', %s (%d)", dst_split_path, strerror(rc), rc);
 			break;
 		} else if (rc == ENOENT) {
 			/* doesn't exist, create it */
-			rc = p9l_open(cwd, dst_canon_path, &dst_fid, O_WRONLY | O_CREAT | O_TRUNC, 0666, 0);
+			rc = p9l_open(cwd, dst_split_path, &dst_fid, O_WRONLY | O_CREAT | O_TRUNC, 0666, 0);
 			if (rc) {
-				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", dst_canon_path, strerror(rc), rc);
+				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", dst_split_path, strerror(rc), rc);
 				break;
 			}
 		} else if (dst_dir_fid->qid.type != P9_QTDIR) {
@@ -492,7 +476,7 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 			/* is a directory, open inside */
 			rc = p9l_open(dst_dir_fid, src_basename, &dst_fid, O_WRONLY | O_CREAT | O_TRUNC, 0666, 0);
 			if (rc) {
-				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", dst_canon_path, strerror(rc), rc);
+				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "open failed on '%s', %s (%d)", dst_split_path, strerror(rc), rc);
 				break;
 			}
 		}
@@ -523,14 +507,14 @@ int p9l_cp(struct p9_fid *cwd, char *src, char *dst) {
 	p9l_clunk(&src_fid);
 	p9l_clunk(&dst_fid);
 	p9l_clunk(&dst_dir_fid);
-	free(src_canon_path);
-	free(dst_canon_path);
+	free(src_split_path);
+	free(dst_split_path);
 	return rc;
 }
 
 int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flags, uint32_t mode, uint32_t gid) {
 	struct p9_handle *p9_handle;
-	char *canon_path, *dirname, *basename;
+	char *split_path = NULL, *dirname, *basename;
 	struct p9_fid *fid = NULL;
 	struct p9_setattr attr;
 	int rc, relative;
@@ -541,18 +525,16 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 
 	p9_handle = cwd->p9_handle;
 
-	canon_path = malloc(strlen(path)+1);
-	if (!canon_path)
-		return ENOMEM;
-
-	strcpy(canon_path, path);
-	path_canonicalizer(canon_path);
-
 	do {
-		rc = p9l_walk(cwd, canon_path, &fid, 0);
+		rc = p9l_walk(cwd, path, &fid, 0);
 		if (rc && flags & O_CREAT) {
 			/* file doesn't exist */
-			relative = path_split(canon_path, &dirname, &basename);
+			split_path = malloc(strlen(path)+1);
+			if (!split_path)
+				return ENOMEM;
+
+			strcpy(split_path, path);
+			relative = path_split(split_path, &dirname, &basename);
 			if (basename[0] == '\0') {
 				return EINVAL;
 			}
@@ -568,13 +550,13 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 				break;
 			}
 		} else if (rc) {
-			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open file '%s', %s (%d)", canon_path, strerror(rc), rc);
+			INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open file '%s', %s (%d)", path, strerror(rc), rc);
 			break;
 		} else {
 			/* file exists, open and eventually truncate */
 			rc = p9p_lopen(p9_handle, fid, flags, NULL);
 			if (rc) {
-				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open existing file '%s', %s (%d)", canon_path, strerror(rc), rc);
+				INFO_LOG(p9_handle->debug & P9_DEBUG_LIBC, "cannot open existing file '%s', %s (%d)", path, strerror(rc), rc);
 				break;
 			}
 			if (flags & O_TRUNC) {
@@ -596,7 +578,7 @@ int p9l_open(struct p9_fid *cwd, char *path, struct p9_fid **pfid, uint32_t flag
 	else
 		*pfid = fid;
 
-	free(canon_path);
+	free(split_path);
 	return rc;
 }
 
@@ -641,7 +623,7 @@ int p9l_stat(struct p9_fid *cwd, char *path, struct p9_getattr *attr, int flags)
 	if (!cwd || !path)
 		return EINVAL;
 
-	rc = p9l_walk(cwd, path, &fid, 0);
+	rc = p9l_walk(cwd, path, &fid, flags);
 	if (!rc) {
 		rc = p9l_fstat(fid, attr);
 		p9l_clunk(&fid);
