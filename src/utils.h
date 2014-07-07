@@ -34,6 +34,9 @@
 #define atomic_postdec(x) __sync_sub_and_fetch(&x, 1)
 #define	atomic_bool_compare_and_swap __sync_bool_compare_and_swap
 
+#ifndef offsetof
+#define offsetof(type, member)  __builtin_offsetof (type, member)
+#endif
 
 static inline int set_size(uint32_t *val, char *unit) {
         switch(unit[0]) {

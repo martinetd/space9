@@ -22,7 +22,7 @@
 %module(docstring="Space9 userspace 9P library. Everyting starts with a p9_handle('conffile').") space9
 %{
 #include "9p_internals.h"
-
+#include "utils.h"
 
 struct fid {
 	struct p9_fid *ptr;

@@ -64,8 +64,6 @@ struct conf {
 	int offset;
 };
 
-#define offsetof(type, member)  __builtin_offsetof (type, member)
-
 #if HAVE_MOOSHIKA
 static char *p9_net_rdma_s = "rdma";
 static struct p9_net_ops p9_rdma_ops = {
