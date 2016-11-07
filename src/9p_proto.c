@@ -658,7 +658,7 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 
 
 int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
-               uint32_t gid, uint32_t *iounit) {
+	       uint32_t gid, uint32_t *iounit) {
 	int rc;
 	msk_data_t *data;
 	uint16_t tag;
@@ -727,7 +727,7 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 
 
 int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, char *symtgt, uint32_t gid,
-                struct p9_qid *qid) {
+		struct p9_qid *qid) {
 	int rc;
 	msk_data_t *data;
 	uint16_t tag;
@@ -785,7 +785,7 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
 
 
 int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode, uint32_t major, uint32_t minor,
-             uint32_t gid, struct p9_qid *qid) {
+	     uint32_t gid, struct p9_qid *qid) {
 	int rc;
 	msk_data_t *data;
 	uint16_t tag;
@@ -970,7 +970,7 @@ int p9p_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char *target, 
 
 
 int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t mode,
-               uint32_t gid, struct p9_qid *qid) {
+	       uint32_t gid, struct p9_qid *qid) {
 	int rc;
 	msk_data_t *data;
 	uint16_t tag;
@@ -1028,7 +1028,7 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 
 
 int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffset,
-                p9p_readdir_cb callback, void *callback_arg) {
+		p9p_readdir_cb callback, void *callback_arg) {
 	int rc;
 	msk_data_t *data;
 	uint64_t offset;
@@ -2033,11 +2033,11 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
 			p9_getvalue(cursor, fs_stats->bsize, uint32_t);
 			p9_getvalue(cursor, fs_stats->blocks, uint64_t);
 			p9_getvalue(cursor, fs_stats->bfree, uint64_t);
-		        p9_getvalue(cursor, fs_stats->bavail, uint64_t);
+			p9_getvalue(cursor, fs_stats->bavail, uint64_t);
 			p9_getvalue(cursor, fs_stats->files, uint64_t);
 			p9_getvalue(cursor, fs_stats->ffree, uint64_t);
 			p9_getvalue(cursor, fs_stats->fsid, uint64_t);
-		        p9_getvalue(cursor, fs_stats->namelen, uint32_t);
+			p9_getvalue(cursor, fs_stats->namelen, uint32_t);
 			break;
 
 		case P9_RERROR:

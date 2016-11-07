@@ -93,18 +93,18 @@ int main() {
 	char *s;
 	struct functions *fn;
 	struct p9_handle *p9_handle;
-        int rc, len;
+	int rc, len;
 
-        rc = p9_init(&p9_handle, "sample.conf");
-        if (rc) {
-                ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
-                return rc;
-        }
+	rc = p9_init(&p9_handle, "sample.conf");
+	if (rc) {
+		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
+		return rc;
+	}
 
 	run_threads = 1;
 	signal(SIGINT, panic);
 
-        INFO_LOG(1, "Init success");
+	INFO_LOG(1, "Init success");
 
 #ifdef HAVE_READLINE
 	using_history();
@@ -176,7 +176,7 @@ int main() {
 #endif
 	}
 
-        p9_destroy(&p9_handle);
+	p9_destroy(&p9_handle);
 
-        return rc;
+	return rc;
 }

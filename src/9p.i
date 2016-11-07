@@ -455,8 +455,8 @@ flags can be O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND") fid;
 	}
 %feature("docstring", "open if fid was obtained from a walk/had no flag on creation") open;
        void open(uint32_t flags) {
-               if ($self->ptr->openflags == 0)
-                       errno = p9p_lopen($self->ptr->p9_handle, $self->ptr, flags, NULL);
+	       if ($self->ptr->openflags == 0)
+		       errno = p9p_lopen($self->ptr->p9_handle, $self->ptr, flags, NULL);
 	}
 	void chown(uint32_t uid, uint32_t gid) {
 		errno = p9l_fchown($self->ptr, uid, gid);

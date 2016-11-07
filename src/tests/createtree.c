@@ -241,11 +241,11 @@ int main(int argc, char **argv) {
 
 	pthread_mutex_init(&thrarg.lock, NULL);
 	pthread_barrier_init(&thrarg.barrier, NULL, thrnum + 1);
-        rc = p9_init(&thrarg.p9_handle, conffile);
-        if (rc) {
-                ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
-                return rc;
-        }
+	rc = p9_init(&thrarg.p9_handle, conffile);
+	if (rc) {
+		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
+		return rc;
+	}
 
 	rc = p9l_mkdir(p9l_getcwd(thrarg.p9_handle), basename, 0);
 	if (rc && rc != EEXIST) {
@@ -259,7 +259,7 @@ int main(int argc, char **argv) {
 		return rc;
 	}
 
-        INFO_LOG(1, "Init success");
+	INFO_LOG(1, "Init success");
 
 	for (i=0; i<thrnum; i++)
 		pthread_create(&thrid[i], NULL, createtreethr, &thrarg);
@@ -302,7 +302,7 @@ int main(int argc, char **argv) {
 
 	pthread_mutex_destroy(&thrarg.lock);
 	pthread_barrier_destroy(&thrarg.barrier);
-        p9_destroy(&thrarg.p9_handle);
+	p9_destroy(&thrarg.p9_handle);
 
-        return rc;
+	return rc;
 }

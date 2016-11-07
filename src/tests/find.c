@@ -226,13 +226,13 @@ int main(int argc, char **argv) {
 
 	thrid = malloc(sizeof(pthread_t)*thrnum);
 
-        rc = p9_init(&p9_handle, conffile);
-        if (rc) {
-                ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
-                return rc;
-        }
+	rc = p9_init(&p9_handle, conffile);
+	if (rc) {
+		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
+		return rc;
+	}
 
-        INFO_LOG(1, "Init success");
+	INFO_LOG(1, "Init success");
 
 	for (i=0; i<thrnum; i++)
 		pthread_create(&thrid[i], NULL, walkthr, p9_handle);
@@ -240,7 +240,7 @@ int main(int argc, char **argv) {
 	for (i=0; i<thrnum; i++)
 		pthread_join(thrid[i], NULL);
 
-        p9_destroy(&p9_handle);
+	p9_destroy(&p9_handle);
 
-        return rc;
+	return rc;
 }

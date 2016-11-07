@@ -374,7 +374,7 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		p9_handle->wdata = malloc(p9_handle->recv_num * sizeof(msk_data_t));
 		if (p9_handle->rdmabuf == NULL || p9_handle->rdata == NULL || p9_handle->wdata == NULL) {
 			ERROR_LOG("Could not allocate data buffer (%luMB)",
-			          2 * p9_handle->recv_num * (p9_conf.msize + sizeof(msk_data_t)) / 1024 / 1024);
+				  2 * p9_handle->recv_num * (p9_conf.msize + sizeof(msk_data_t)) / 1024 / 1024);
 			rc = ENOMEM;
 			break;
 		}
