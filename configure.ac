@@ -69,7 +69,7 @@ if test "x$with_mooshika" != "xno" ; then
 		CFLAGS="-I$with_mooshika/include $CFLAGS"
 	fi
 	AC_CHECK_HEADERS([mooshika.h],[], [AC_MSG_ERROR([missing mooshika headers, if on purpose use --without-mooshika])])
-	AC_SEARCH_LIBS([msk_init], [mooshika], [enable_moosika=yes; AC_DEFINE([HAVE_MOOSHIKA], [1], [Defined to use mooshika])], [
+	AC_SEARCH_LIBS([msk_init], [mooshika], [enable_mooshika=yes; AC_DEFINE([HAVE_MOOSHIKA], [1], [Defined to use mooshika])], [
 		AC_MSG_ERROR([unable to find mooshika, if on purpose use --without-mooshika])
 	])
 fi
