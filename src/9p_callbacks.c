@@ -63,6 +63,12 @@ void p9_recv_cb(msk_trans_t *trans, msk_data_t *data, void *arg) {
 	if (tag == P9_NOTAG)
 		tag = p9_handle->max_tag-1;
 
+	/* Sanity */
+	if (tag >= p9_handle->max_tag) {
+		ERROR_LOG("tag too big: %d; ignoring packet\n", tag);
+		return;
+	}
+
 	pthread_mutex_lock(&p9_handle->recv_lock);
 	p9_handle->tags[tag].rdata = data;
 	pthread_cond_broadcast(&p9_handle->recv_cond);
