@@ -51,7 +51,7 @@ int p9p_version(struct p9_handle *p9_handle) {
 	/* Version always done with P9_NOTAG, give the hint to getbuffer */
 	tag = P9_NOTAG;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TVERSION, P9_NOTAG);
@@ -64,7 +64,7 @@ int p9p_version(struct p9_handle *p9_handle) {
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -80,6 +80,10 @@ int p9p_version(struct p9_handle *p9_handle) {
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TVERSION, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -107,7 +111,7 @@ int p9p_auth(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pafid) {
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	rc = p9c_getfid(p9_handle, &fid);
@@ -133,7 +137,7 @@ int p9p_auth(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pafid) {
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -149,6 +153,10 @@ int p9p_auth(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pafid) {
 		case P9_RERROR:
 			p9c_putfid(p9_handle, &fid);
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TAUTH, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -177,7 +185,7 @@ int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) 
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	/* handle reconnection: if fid already exists, take the same fid */
@@ -209,7 +217,7 @@ int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) 
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -225,6 +233,10 @@ int p9p_attach(struct p9_handle *p9_handle, uint32_t uid, struct p9_fid **pfid) 
 		case P9_RERROR:
 			p9c_putfid(p9_handle, &fid);
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TATTACH, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -253,7 +265,7 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag) {
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TFLUSH, tag);
@@ -267,7 +279,7 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag) {
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -279,6 +291,10 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag) {
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TFLUSH, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -306,7 +322,7 @@ int p9p_rewalk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, uint
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TWALK, tag);
@@ -348,7 +364,7 @@ int p9p_rewalk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, uint
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -359,6 +375,10 @@ int p9p_rewalk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, uint
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TWALK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -387,7 +407,7 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	rc = p9c_getfid(p9_handle, &newfid);
@@ -436,7 +456,7 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -470,6 +490,10 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 		case P9_RERROR:
 			p9c_putfid(p9_handle, &newfid);
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TWALK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -498,7 +522,7 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TCLUNK, tag);
@@ -513,7 +537,7 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 	rc = p9c_getreply(p9_handle, &data, tag);
 
-	if (rc == 0 && data != NULL) {
+	if (rc == 0) {
 		cursor = data->data;
 		p9_getheader(cursor, msgtype);
 		switch(msgtype) {
@@ -523,6 +547,10 @@ int p9p_clunk(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 			case P9_RERROR:
 				p9_getvalue(cursor, rc, uint32_t);
+				if (rc == 0) {
+					ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TCLUNK, tag);
+					rc = EIO;
+				}
 				break;
 
 			default:
@@ -554,7 +582,7 @@ int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TREMOVE, tag);
@@ -569,7 +597,7 @@ int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 	rc = p9c_getreply(p9_handle, &data, tag);
 
-	if (rc == 0 && data != NULL) {
+	if (rc == 0) {
 		cursor = data->data;
 		p9_getheader(cursor, msgtype);
 		switch(msgtype) {
@@ -579,6 +607,10 @@ int p9p_remove(struct p9_handle *p9_handle, struct p9_fid **pfid) {
 
 			case P9_RERROR:
 				p9_getvalue(cursor, rc, uint32_t);
+				if (rc == 0) {
+					ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TREMOVE, tag);
+					rc = EIO;
+				}
 				break;
 
 			default:
@@ -609,7 +641,7 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TLOPEN, tag);
@@ -624,7 +656,7 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -644,6 +676,10 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TLOPEN, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -672,7 +708,7 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TLCREATE, tag);
@@ -692,7 +728,7 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -713,6 +749,10 @@ int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uin
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TLCREATE, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -743,7 +783,7 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TSYMLINK, tag);
@@ -758,7 +798,7 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -771,6 +811,10 @@ int p9p_symlink(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, ch
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TSYMLINK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -799,7 +843,7 @@ int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TMKNOD, tag);
@@ -816,7 +860,7 @@ int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -829,6 +873,10 @@ int p9p_mknod(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TMKNOD, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -856,7 +904,7 @@ int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *d
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TRENAME, tag);
@@ -870,7 +918,7 @@ int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *d
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -882,6 +930,10 @@ int p9p_rename(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *d
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TRENAME, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -909,7 +961,7 @@ int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarge
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	p9_initcursor(cursor, data->data, P9_TREADLINK, tag);
@@ -921,7 +973,7 @@ int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarge
 		return -rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	cursor = data->data;
@@ -937,6 +989,10 @@ int p9pz_readlink(struct p9_handle *p9_handle, struct p9_fid *fid, char **ztarge
 			p9_getvalue(cursor, rc, uint32_t);
 			p9c_putreply(p9_handle, data);
 			rc = -rc;
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TREADLINK, tag);
+				rc = -EIO;
+			}
 			break;
 
 		default:
@@ -984,7 +1040,7 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TMKDIR, tag);
@@ -1001,7 +1057,7 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1014,6 +1070,10 @@ int p9p_mkdir(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TMKDIR, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1048,7 +1108,7 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	p9_initcursor(cursor, data->data, P9_TREADDIR, tag);
@@ -1065,7 +1125,7 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 		return -rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	cursor = data->data;
@@ -1101,6 +1161,10 @@ int p9p_readdir(struct p9_handle *p9_handle, struct p9_fid *fid, uint64_t *poffs
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
 			rc = -rc;
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TREADDIR, tag);
+				rc = -EIO;
+			}
 			break;
 
 		default:
@@ -1127,7 +1191,7 @@ ssize_t p9pz_read_send(struct p9_handle *p9_handle, struct p9_fid *fid, size_t c
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	count = p9p_read_len(p9_handle, count);
@@ -1155,7 +1219,7 @@ ssize_t p9pz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t
 	uint8_t *cursor;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	cursor = data->data;
@@ -1172,6 +1236,10 @@ ssize_t p9pz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t
 			p9_getvalue(cursor, rc, uint32_t);
 			p9c_putreply(p9_handle, data);
 			rc = -rc;
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TREAD, tag);
+				rc = -EIO;
+			}
 			break;
 
 		default:
@@ -1259,7 +1327,7 @@ ssize_t p9pz_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 	uint8_t msgtype;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	INFO_LOG(p9_handle->debug & P9_DEBUG_PROTO, "writewait tag %u", tag);
@@ -1274,6 +1342,10 @@ ssize_t p9pz_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
 			rc = -rc;
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TWRITE, tag);
+				rc = -EIO;
+			}
 			break;
 
 		default:
@@ -1309,7 +1381,7 @@ ssize_t p9p_write_send(struct p9_handle *p9_handle, struct p9_fid *fid, char *bu
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	count = p9p_write_len(p9_handle, count);
@@ -1340,7 +1412,7 @@ ssize_t p9p_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 	uint8_t *cursor;
 	
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return -rc;
 
 	cursor = data->data;
@@ -1353,6 +1425,10 @@ ssize_t p9p_write_wait(struct p9_handle *p9_handle, uint16_t tag) {
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
 			rc = -rc;
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TWRITE, tag);
+				rc = -EIO;
+			}
 			break;
 
 		default:
@@ -1390,7 +1466,7 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	rc = p9c_getfid(p9_handle, &newfid);
@@ -1415,7 +1491,7 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1430,6 +1506,10 @@ int p9p_xattrwalk(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid
 		case P9_RERROR:
 			p9c_putfid(p9_handle, &newfid);
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TXATTRWALK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1458,7 +1538,7 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TXATTRCREATE, tag);
@@ -1473,7 +1553,7 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1485,6 +1565,10 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TXATTRCREATE, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1512,7 +1596,7 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TRENAMEAT, tag);
@@ -1529,7 +1613,7 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1541,6 +1625,10 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TRENAMEAT, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1568,7 +1656,7 @@ int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, u
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TUNLINKAT, tag);
@@ -1584,7 +1672,7 @@ int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, u
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1596,6 +1684,10 @@ int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, u
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TUNLINKAT, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1622,7 +1714,7 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	if (attr->valid == 0) {
@@ -1641,7 +1733,7 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1676,6 +1768,10 @@ int p9p_getattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_getat
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TGETATTR, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1702,7 +1798,7 @@ int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setat
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TSETATTR, tag);
@@ -1725,7 +1821,7 @@ int p9p_setattr(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_setat
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1763,7 +1859,7 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TFSYNC, tag);
@@ -1777,7 +1873,7 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1789,6 +1885,10 @@ int p9p_fsync(struct p9_handle *p9_handle, struct p9_fid *fid) {
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TFSYNC, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1816,7 +1916,7 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TLINK, tag);
@@ -1832,7 +1932,7 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1844,6 +1944,10 @@ int p9p_link(struct p9_handle *p9_handle, struct p9_fid *fid, struct p9_fid *dfi
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TLINK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1871,7 +1975,7 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TLOCK, tag);
@@ -1891,7 +1995,7 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1921,6 +2025,10 @@ int p9p_lock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t type, uint
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TLOCK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -1948,7 +2056,7 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TGETLOCK, tag);
@@ -1967,7 +2075,7 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -1982,6 +2090,10 @@ int p9p_getlock(struct p9_handle *p9_handle, struct p9_fid *fid, uint8_t *ptype,
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TGETLOCK, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
@@ -2008,7 +2120,7 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
 
 	tag = 0;
 	rc = p9c_getbuffer(p9_handle, &data, &tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	p9_initcursor(cursor, data->data, P9_TSTATFS, tag);
@@ -2022,7 +2134,7 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
 		return rc;
 
 	rc = p9c_getreply(p9_handle, &data, tag);
-	if (rc != 0 || data == NULL)
+	if (rc != 0)
 		return rc;
 
 	cursor = data->data;
@@ -2042,10 +2154,14 @@ int p9p_statfs(struct p9_handle *p9_handle, struct p9_fid *fid, struct fs_stats 
 
 		case P9_RERROR:
 			p9_getvalue(cursor, rc, uint32_t);
+			if (rc == 0) {
+				ERROR_LOG("Got 9P_RERROR but no rc set, msg %u/tag %u", msgtype, P9_TSTATFS, tag);
+				rc = EIO;
+			}
 			break;
 
 		default:
-			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TGETLOCK, tag);
+			ERROR_LOG("Wrong reply type %u to msg %u/tag %u", msgtype, P9_TSTATFS, tag);
 			rc = EIO;
 	}
 
