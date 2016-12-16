@@ -55,7 +55,17 @@ void p9_recv_cb(msk_trans_t *trans, msk_data_t *data, void *arg) {
 	struct p9_handle *p9_handle = trans->private_data;
 	uint16_t tag;
 
-	p9_get_tag(&tag, data->data);
+	switch (p9_handle->proto) {
+		case PROTO_9P:
+			p9_get_tag(&tag, data->data);
+			break;
+		case PROTO_LIOP:
+			liop_get_tag(&tag, data->data);
+			break;
+		default:
+			ERROR_LOG("unknown protocol %d\n", p9_handle->proto);
+			return;
+	}
 
 	INFO_LOG(p9_handle->debug & P9_DEBUG_RECV, "got reply for tag %u", tag);
 
@@ -86,4 +96,3 @@ void p9_send_err_cb(msk_trans_t *trans, msk_data_t *data, void *arg) {
 
 	p9_send_cb(trans, data, arg);
 }
-

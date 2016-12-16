@@ -73,6 +73,30 @@ static int p9ci_rebuild_fids(void *arg, uint32_t i) {
 	return rc;
 }
 
+static int p9ci_9p_reinit(struct p9_handle *p9_handle) {
+	int rc, i;
+
+	rc = p9p_version(p9_handle);
+	if (rc) {
+		ERROR_LOG("version failed: %s (%d)", strerror(rc), rc);
+		return rc;
+	}
+
+	rc = p9p_attach(p9_handle, p9_handle->uid, &p9_handle->root_fid);
+	if (rc) {
+		ERROR_LOG("attach failed: %s (%d)", strerror(rc), rc);
+		return rc;
+	}
+
+	for (i=1; i < p9_handle->max_fid; i++) {
+		if (p9_handle->fids[i] != NULL)
+			p9ci_rebuild_fids(p9_handle, i);
+	}
+
+	return 0;
+}
+
+
 int p9c_reconnect(struct p9_handle *p9_handle) {
 	int sleeptime = 0;
 	int rc = 0, i;
@@ -134,21 +158,17 @@ int p9c_reconnect(struct p9_handle *p9_handle) {
 			continue;
 		}
 
-		rc = p9p_version(p9_handle);
-		if (rc) {
-			ERROR_LOG("version failed: %s (%d)", strerror(rc), rc);
-			break;
-		}
-
-		rc = p9p_attach(p9_handle, p9_handle->uid, &p9_handle->root_fid);
-		if (rc) {
-			ERROR_LOG("attach failed: %s (%d)", strerror(rc), rc);
-			break;
-		}
-
-		for (i=1; i < p9_handle->max_fid; i++) {
-			if (p9_handle->fids[i] != NULL)
-				p9ci_rebuild_fids(p9_handle, i);
+		switch (p9_handle->proto) {
+			case PROTO_9P:
+				rc = p9ci_9p_reinit(p9_handle);
+				break;
+			case PROTO_LIOP:
+				/* nothing to do */
+				break;
+			default:
+				ERROR_LOG("unknown protocol %d\n", p9_handle->proto);
+				rc = EINVAL;
+				break;
 		}
 	}
 

@@ -1,6 +1,6 @@
 AM_CFLAGS = -g -Wall -Werror -I$(srcdir)/../../include -I$(srcdir)/..
 
-noinst_PROGRAMS = test_bitmap test_utils find readwrite createtree
+noinst_PROGRAMS = test_bitmap test_utils find readwrite createtree liop
 
 test_bitmap_SOURCES = test_bitmap.c
 test_bitmap_LDADD = ../libspace9.la
@@ -16,3 +16,6 @@ readwrite_LDADD = ../libspace9.la -lpthread
 
 createtree_SOURCES = createtree.c
 createtree_LDADD = ../libspace9.la -lpthread
+
+liop_SOURCES = liop.c
+liop_LDADD = ../libspace9.la

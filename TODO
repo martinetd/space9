@@ -1,0 +1,9 @@
+LIOP todo:
+ - Change size_t-s counts to uint32_t in argument (or check oob)
+ - Check message lengths are big enough when accessing data
+ - print RERROR messages if available
+ - Python liop bindings
+ - Better liop tests
+
+9p shell parser
+

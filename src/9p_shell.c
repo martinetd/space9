@@ -95,7 +95,11 @@ int main() {
 	struct p9_handle *p9_handle;
 	int rc, len;
 
-	rc = p9_init(&p9_handle, "sample.conf");
+	char *server = NULL, *port = NULL;
+	/* XXX parse server */
+	server = "127.0.0.1";
+
+	rc = p9_init(&p9_handle, "sample.conf", server, port);
 	if (rc) {
 		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
 		return rc;

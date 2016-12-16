@@ -91,8 +91,6 @@ static struct p9_net_ops p9_tcp_ops = {
 };
 
 static struct conf conf_array[] = {
-	{ "server", IP, 0 },
-	{ "port", PORT, 0 },
 	{ "rdma_debug", UINT, offsetof(struct p9_conf, trans_attr) + offsetof(struct msk_trans_attr, debug) },
 	{ "debug", UINT, offsetof(struct p9_conf, debug) },
 	{ "msize", SIZE, offsetof(struct p9_conf, msize) },
@@ -114,7 +112,6 @@ int parser(char *conf_file, struct p9_conf *p9_conf) {
 	int i, ret, rc;
 	char buf_s[MAXNAMLEN];
 	int buf_i;
-	char *port;
 	void *ptr;
 	rc = 0;
 
@@ -128,8 +125,7 @@ int parser(char *conf_file, struct p9_conf *p9_conf) {
 
 	// fill default values.
 	memset(p9_conf, 0, sizeof(struct p9_conf));
-	port = NULL;
-	p9_conf->trans_attr.server = -1;
+	p9_conf->trans_attr.server = 0;
 	p9_conf->trans_attr.disconnect_callback = p9_disconnect_cb;
 	p9_conf->trans_attr.max_send_sge = 2;
 	p9_conf->trans_attr.rq_depth = DEFAULT_RECV_NUM;
@@ -192,30 +188,6 @@ int parser(char *conf_file, struct p9_conf *p9_conf) {
 					}
 					INFO_LOG(p9_conf->debug & P9_DEBUG_SETUP, "Read %s: %i", conf_array[i].token, *(int*)ptr);
 					break;
-				case IP:
-					if (sscanf(line, "%*s = %s", buf_s) != 1) {
-						ERROR_LOG("scanf error on line: %s", line);
-						rc = EINVAL;
-						goto out;
-					}
-					p9_conf->trans_attr.node = strdup(buf_s);
-
-					// Sanity check: we got an IP
-					p9_conf->trans_attr.server = 0;
-
-					INFO_LOG(p9_conf->debug & P9_DEBUG_SETUP, "Read %s: %s", conf_array[i].token, buf_s);
-					break;
-				case PORT:
-					if (sscanf(line, "%*s = %s", buf_s) != 1) {
-						ERROR_LOG("scanf error on line: %s", line);
-						rc = EINVAL;
-						goto out;
-					}
-
-					port = strdup(buf_s);
-
-					INFO_LOG(p9_conf->debug & P9_DEBUG_SETUP, "Read %s: %s", conf_array[i].token, buf_s);
-					break;
 				case NET_TYPE:
 					if (sscanf(line, "%*s = %s", buf_s) != 1) {
 						ERROR_LOG("scanf error on line: %s", line);
@@ -242,20 +214,6 @@ int parser(char *conf_file, struct p9_conf *p9_conf) {
 		if (conf_array[i].token == NULL) {
 			ERROR_LOG("Unknown configuration entry: %s", line);
 		}
-	}
-
-	// Default port. depends on the sin family
-	if (port == NULL) {
-		if (p9_conf->net_ops == &p9_tcp_ops)
-			p9_conf->trans_attr.port = strdup(DEFAULT_PORT_TCP);
-#if HAVE_MOOSHIKA
-		else if(p9_conf->net_ops == &p9_rdma_ops)
-			p9_conf->trans_attr.port = strdup(DEFAULT_PORT_RDMA);
-#endif
-		else
-			ERROR_LOG("ops neither tcp nor rdma?");
-	} else {
-		p9_conf->trans_attr.port = port;
 	}
 
 out:
@@ -309,7 +267,8 @@ void p9_destroy(struct p9_handle **pp9_handle) {
 	}
 }
 
-int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
+static int handle_init(struct p9_handle **pp9_handle, char *conf_file,
+		       enum p9_proto proto, const char *server, const char *port) {
 	struct addrinfo hints, *info;
 	struct p9_conf p9_conf;
 	struct p9_handle *p9_handle;
@@ -320,7 +279,7 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		ERROR_LOG("parsing error");
 		return rc;
 	}
-	if (p9_conf.aname[0] == '\0' || p9_conf.trans_attr.server == -1) {
+	if (p9_conf.aname[0] == '\0' || !server) {
 		ERROR_LOG("You need to set at least aname and server");
 		return EINVAL;
 	}
@@ -333,9 +292,9 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 	memset(p9_handle, 0, sizeof(struct p9_handle));
 
 	do {
+		p9_handle->proto = proto;
 		strcpy(p9_handle->aname, p9_conf.aname);
 		p9_handle->aname_len = strlen(p9_handle->aname);
-
 		p9_handle->debug = p9_conf.debug;
 		p9_handle->pipeline = p9_conf.pipeline;
 		p9_handle->uid = p9_conf.uid;
@@ -347,6 +306,26 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		p9_handle->umask = umask(0);
 		umask(p9_handle->umask);
 		memcpy(&p9_handle->trans_attr, &p9_conf.trans_attr, sizeof(struct msk_trans_attr));
+
+		p9_handle->trans_attr.node = strdup(server);
+
+		if (port)
+			p9_handle->trans_attr.port = strdup(port);
+		else if (p9_conf.net_ops == &p9_tcp_ops && proto == PROTO_9P)
+			p9_handle->trans_attr.port = strdup(DEFAULT_PORT_9P_TCP);
+		else if (p9_conf.net_ops == &p9_tcp_ops && proto == PROTO_LIOP)
+			p9_handle->trans_attr.port = strdup(DEFAULT_PORT_LIOP_TCP);
+#if HAVE_MOOSHIKA
+		else if (p9_conf.net_ops == &p9_rdma_ops && proto == PROTO_9P)
+			p9_handle->trans_attr.port = strdup(DEFAULT_PORT_9P_RDMA);
+		else if (p9_conf.net_ops == &p9_rdma_ops && proto == PROTO_LIOP)
+			p9_handle->trans_attr.port = strdup(DEFAULT_PORT_LIOP_RDMA);
+#endif
+		else {
+			ERROR_LOG("No port set and not a known proto combinaison");
+			rc = EINVAL;
+			break;
+		}
 
 		/* We need to ask for a little bit more room for better perf */
 		p9_handle->trans_attr.rq_depth += 1;
@@ -390,14 +369,10 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 
 		 /* bitmaps, divide by /8 (=/64*8)*/
 		p9_handle->wdata_bitmap = bitmap_init(p9_handle->recv_num);
-		p9_handle->fids_bitmap = bitmap_init(p9_handle->max_fid);
 		p9_handle->tags_bitmap = bitmap_init(p9_handle->max_tag);
-		p9_handle->fids_bucket = bucket_init(p9_handle->max_fid/8, sizeof(struct p9_fid));
 		p9_handle->tags = calloc(1, p9_handle->max_tag * sizeof(struct p9_tag));
-		p9_handle->fids = calloc(1, p9_handle->max_fid * sizeof(void*));
-		if (p9_handle->wdata_bitmap == NULL || p9_handle->fids_bitmap == NULL ||
-		    p9_handle->tags_bitmap == NULL || p9_handle->fids_bucket == NULL ||
-		    p9_handle->tags == NULL || p9_handle->fids == NULL) {
+		if (p9_handle->wdata_bitmap == NULL || p9_handle->tags_bitmap == NULL ||
+		    p9_handle->tags == NULL) {
 			rc = ENOMEM;
 			break;
 		}
@@ -414,13 +389,42 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 		pthread_cond_init(&p9_handle->credit_cond, NULL);
 
 		rc = p9c_reconnect(p9_handle);
-		if (rc)
+	} while (0);
+
+	if (rc) {
+		p9_destroy(&p9_handle);
+		return rc;
+	}
+
+	*pp9_handle = p9_handle;
+
+	return rc;
+}
+
+int p9_init(struct p9_handle **pp9_handle, char *conf_file,
+	    const char *server, const char *port) {
+	struct p9_handle *p9_handle;
+	int rc;
+
+	rc = handle_init(&p9_handle, conf_file, PROTO_9P, server, port);
+	if (rc)
+		return rc;
+
+	/* finish 9p specific init */
+	do {
+		p9_handle->fids_bitmap = bitmap_init(p9_handle->max_fid);
+		p9_handle->fids_bucket = bucket_init(p9_handle->max_fid/8, sizeof(struct p9_fid));
+		p9_handle->fids = calloc(1, p9_handle->max_fid * sizeof(void*));
+
+		if (p9_handle->fids_bitmap == NULL || p9_handle->fids_bucket == NULL ||
+		    p9_handle->fids == NULL) {
+			rc = ENOMEM;
 			break;
+		}
 
 		rc = p9p_walk(p9_handle, p9_handle->root_fid, NULL, &p9_handle->cwd);
 		if (rc)
 			break;
-
 	} while (0);
 
 	if (rc) {
@@ -430,4 +434,9 @@ int p9_init(struct p9_handle **pp9_handle, char *conf_file) {
 
 	*pp9_handle = p9_handle;
 	return 0;
+}
+
+int liop_init(struct p9_handle **pp9_handle, char *conf_file,
+	      const char *server, const char *port) {
+	return handle_init(pp9_handle, conf_file, PROTO_LIOP, server, port);
 }

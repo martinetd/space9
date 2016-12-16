@@ -31,7 +31,7 @@
 #include <string.h>     // memset
 #include <sys/types.h>
 #include <sys/stat.h>
-
+#include <fcntl.h> // struct file_handle
 
 /* library types */
 
@@ -226,7 +226,10 @@ typedef int (*p9p_readdir_cb) (void *arg, struct p9_handle *p9_handle, struct p9
  * @{
  */
 
-int p9_init(struct p9_handle **pp9_handle, char *conf_file);
+int p9_init(struct p9_handle **pp9_handle, char *conf_file,
+	    const char *server, const char *port);
+int liop_init(struct p9_handle **pp9_handle, char *conf_file,
+	      const char *server, const char *port);
 void p9_destroy(struct p9_handle **pp9_handle);
 
 
@@ -404,7 +407,7 @@ int p9p_flush(struct p9_handle *p9_handle, uint16_t oldtag);
 int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct p9_fid **pnewfid);
 
 /* size[4] Rread tag[2] count[4] data[count] */
-#define P9_ROOM_RREAD (P9_STD_HDR_SIZE + 4 )
+#define P9_RREAD_HDR_SIZE (P9_STD_HDR_SIZE + 4)
 /**
  * @brief zero-copy read from a file.
  * Even if count is > msize, more won't be received
@@ -424,7 +427,7 @@ int p9p_walk(struct p9_handle *p9_handle, struct p9_fid *fid, char *path, struct
 ssize_t p9pz_read(struct p9_handle *p9_handle, struct p9_fid *fid,  size_t count, uint64_t offset, msk_data_t **pdata);
 
 static inline int p9pz_read_put(struct p9_handle *p9_handle, msk_data_t *data) {
-	data->data -= P9_ROOM_RREAD;
+	data->data -= P9_RREAD_HDR_SIZE;
 	return p9c_putreply(p9_handle, data);
 }
 
@@ -448,7 +451,7 @@ ssize_t p9p_read(struct p9_handle *p9_handle, struct p9_fid *fid, char *buf, siz
 
 
 /* size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count] */
-#define P9_ROOM_TWRITE (P9_STD_HDR_SIZE + 4 + 8 + 4)
+#define P9_TWRITE_HDR_SIZE (P9_STD_HDR_SIZE + 4 + 8 + 4)
 /**
  * @brief zero-copy write from a file.
  * Even if count is > msize, more won't be received
@@ -563,7 +566,7 @@ int p9p_lopen(struct p9_handle *p9_handle, struct p9_fid *fid, uint32_t flags, u
 int p9p_lcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name, uint32_t flags, uint32_t mode,
                uint32_t gid, uint32_t *iounit);
 
-#define P9_ROOM_TSYMLINK (P9_STD_HDR_SIZE + 4 + 2 + 2 + 4 )
+#define P9_TSYMLINK_HDR_SIZE (P9_STD_HDR_SIZE + 4 + 2 + 2 + 4 )
 /**
  * @brief Create a symlink
  *
@@ -724,7 +727,7 @@ int p9p_xattrcreate(struct p9_handle *p9_handle, struct p9_fid *fid, char *name,
 
 
 /* size[4] Rreaddir tag[2] count[4] data[count] */
-#define P9_ROOM_RREADDIR (P9_STD_HDR_SIZE + 4 )
+#define P9_RREADDIR_HDR_SIZE (P9_STD_HDR_SIZE + 4)
 /**
  * @brief readdir with callback on each entry
  *
@@ -865,6 +868,96 @@ int p9p_renameat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, s
  * @return 0 on success, errno value on error.
  */
 int p9p_unlinkat(struct p9_handle *p9_handle, struct p9_fid *dfid, char *name, uint32_t flags);
+
+#define LIOP_STD_HDR_SIZE (4 + 2 + 2)
+/**
+ * @brief liop status
+ *
+ * size[4] TSTATUS tag[2] fsname[s]
+ * size[4] RSTATUS tag[2] status[4]
+ */
+int liop_status(struct p9_handle *p9_handle, char *fsname);
+
+/**
+ * @brief liop gethandle
+ *
+ * size[4] TGETHANDLE tag[2] fsname[s] path[s] uid[4]
+ * size[4] RGETHANDLE tag[2] fhandle[]
+ */
+int liop_gethandle(struct p9_handle *p9_handle, char *fsname, char *path,
+		   uint32_t uid, struct file_handle **pfhandle);
+
+
+/**
+ * @brief liop "READ" operation
+ *
+ * All these variants are based on inline read, the "z" zero-copy
+ * versions are just part of the op to allow pipelining but
+ * still do small send/recv
+ *
+ * size[4] TREAD tag[2] fsname[s] fhandle[] uid[4] offset[8] len[4]
+ * size[4] RREAD tag[2] len[4] padding[4] data[len]
+ */
+
+#define LIOP_RREAD_HDR_SIZE (LIOP_STD_HDR_SIZE + 4 + 4)
+
+ssize_t liopz_read_send(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                        uint32_t uid, size_t count, uint64_t offset, uint16_t *ptag);
+ssize_t liopz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t tag);
+ssize_t liopz_read(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                   uint32_t uid, size_t count, uint64_t offset, msk_data_t **pdata);
+static inline int liopz_read_put(struct p9_handle *p9_handle, msk_data_t *data) {
+	data->data -= LIOP_RREAD_HDR_SIZE;
+	return p9c_putreply(p9_handle, data);
+}
+ssize_t liop_read(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                  uint32_t uid, char *buf, size_t count, uint64_t offset);
+
+
+/**
+ * @brief liop "WRITE" operation
+ *
+ * All these variants are based on inline write, the "z" zero-copy
+ * version will just register the user buffer before sending it inline
+ *
+ * size[4] TWRITE tag[2] fsname[s] fhandle[] uid[4] offset[8] len[4] padding[] data[len]
+ * size[4] RWRITE tag[2] len[4]
+ *
+ * padding here is abritrary to have data aligned on a 16-bytes boundary
+ */
+
+
+/**
+ * WRITE_HDR_SIZE depends on fsname/fhandle size, this does not include fsname_len and
+ * fhandle->handle_bytes (but does include the len size and fhandle size)
+ * As such, it cannot include padding either.
+ */
+#define LIOP_TWRITE_HDR_SIZE (LIOP_STD_HDR_SIZE + 2 + sizeof(struct file_handle) + 4 + 8 + 4)
+
+ssize_t liopz_write_send(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                         uint32_t uid, msk_data_t *data, uint64_t offset, uint16_t *ptag);
+ssize_t liopz_write_wait(struct p9_handle *p9_handle, uint16_t tag);
+ssize_t liopz_write(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                    uint32_t uid, msk_data_t *data, uint64_t offset);
+ssize_t liop_write_send(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                        uint32_t uid, char *buf, size_t count, uint64_t offset, uint16_t *ptag);
+ssize_t liop_write_wait(struct p9_handle *p9_handle, uint16_t tag);
+ssize_t liop_write(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                   uint32_t uid, char *buf, size_t count, uint64_t offset);
+
+
+/**
+ * size[4] TWRITE_RDMA_INIT tag[2] fsname[s] fhandle[] uid[4] offset[8] len[4]
+ * size[4] RWRITE_RDMA_INIT tag[2] reqid[8] len[4] count[4] (raddr[8] rkey[4] size[4])[count]
+ *
+ * size[4] TWRITE_RDMA_FINI tag[2] reqid[8]
+ * size[4] RWRITE_RDMA_FINI tag[2] status[4]
+ */
+ssize_t liop_write_rdma_init(struct p9_handle *p9_handle, char *fsname, struct file_handle *fhandle,
+                             uint32_t uid, uint64_t offset, uint32_t count, uint64_t *preqid,
+                             uint32_t *pcount, msk_rloc_t **prloc);
+
+int liop_write_rdma_fini(struct p9_handle *p9_handle, uint64_t reqid);
 
 /**
  * @}

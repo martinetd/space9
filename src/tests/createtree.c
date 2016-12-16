@@ -45,6 +45,7 @@
 #define DEFAULT_FWIDTH 64
 #define DEFAULT_DEPTH 2
 #define DEFAULT_CONFFILE "../sample.conf"
+#define DEFAULT_SERVER "127.0.0.1"
 
 struct thrarg {
 	struct p9_handle *p9_handle;
@@ -149,7 +150,7 @@ static void print_help(char **argv) {
 
 int main(int argc, char **argv) {
 	int rc, i;
-	char *conffile, *basename;
+	char *conffile, *basename, *server, *port;
 	pthread_t *thrid;
 	int thrnum = 0;
 	struct thrarg thrarg;
@@ -162,9 +163,13 @@ int main(int argc, char **argv) {
 	thrarg.no_unlink = 0;
 	basename = DEFAULT_PREFIX;
 	conffile = DEFAULT_CONFFILE;
+        server = DEFAULT_SERVER;
+        port = NULL;
 
 	static struct option long_options[] = {
 		{ "conf",	required_argument,	0,		'c' },
+		{ "server",	required_argument,	0,		's' },
+		{ "port",	required_argument,	0,		'p' },
 		{ "help",	no_argument,		0,		'h' },
 		{ "threads",	required_argument,	0,		't' },
 		{ "dir-width",	required_argument,	0,		'W' },
@@ -178,7 +183,7 @@ int main(int argc, char **argv) {
 	int option_index = 0;
 	int op;
 
-	while ((op = getopt_long(argc, argv, "@c:ht:W:w:d:b:n", long_options, &option_index)) != -1) {
+	while ((op = getopt_long(argc, argv, "@c:s:p:ht:W:w:d:b:n", long_options, &option_index)) != -1) {
 		switch(op) {
 			case '@':
 				printf("%s compiled on %s at %s\n", argv[0], __DATE__, __TIME__);
@@ -193,6 +198,12 @@ int main(int argc, char **argv) {
 			case 'c':
 				conffile = optarg;
 				break;
+                        case 's':
+                                server = optarg;
+                                break;
+                        case 'p':
+                                port = optarg;
+                                break;
 			case 'b':
 				basename = optarg;
 				break;
@@ -241,7 +252,7 @@ int main(int argc, char **argv) {
 
 	pthread_mutex_init(&thrarg.lock, NULL);
 	pthread_barrier_init(&thrarg.barrier, NULL, thrnum + 1);
-	rc = p9_init(&thrarg.p9_handle, conffile);
+	rc = p9_init(&thrarg.p9_handle, conffile, server, port);
 	if (rc) {
 		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
 		return rc;

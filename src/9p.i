@@ -158,9 +158,9 @@ size_t fxattrset(struct p9_fid *fid, char *field, char *buf, int flags) {
 %feature("autodoc", "p9_handle is the filesystem handle. Use it to open a file, list directories, etc.
 Most fd-operations can be done on fids once you have one (walk or open)") p9_handle;
 %extend p9_handle {
-	p9_handle(char *conf) {
+	p9_handle(char *conf, const char *server, const char *port) {
 		struct p9_handle *handle;
-		errno = p9_init(&handle, conf);
+		errno = p9_init(&handle, conf, server, port);
 		return handle;
 	}
 	~p9_handle() {

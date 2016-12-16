@@ -158,6 +158,11 @@ static inline void p9_get_tag(uint16_t *ptag, uint8_t *data) {
 	memcpy(ptag, data + sizeof(uint32_t) /* msg len */ + sizeof(uint8_t) /* msg type */, sizeof(uint16_t));
 }
 
+static inline void liop_get_tag(uint16_t *ptag, uint8_t *data) {
+	memcpy(ptag, data + sizeof(uint32_t) /* msg len */ + sizeof(uint16_t) /* req_type */,
+	       sizeof(uint16_t));
+}
+
 struct p9_tag {
 	msk_data_t *rdata;
 	uint32_t wdata_i;
@@ -175,6 +180,11 @@ struct p9_net_ops {
 
 	int (*post_n_recv)(msk_trans_t *trans, msk_data_t *data, int num_sge, ctx_callback_t callback, ctx_callback_t err_callback, void *callback_arg);
 	int (*post_n_send)(msk_trans_t *trans, msk_data_t *data, int num_sge, ctx_callback_t callback, ctx_callback_t err_callback, void *callback_arg);
+};
+
+enum p9_proto {
+	PROTO_9P,
+	PROTO_LIOP
 };
 
 struct p9_handle {
@@ -197,14 +207,15 @@ struct p9_handle {
 	pthread_mutex_t connection_lock;
 	pthread_mutex_t credit_lock;
 	pthread_cond_t credit_cond;
-	uint32_t credits;
-	uint32_t max_fid;
 	bitmap_t *wdata_bitmap;
 	bitmap_t *tags_bitmap;
 	struct p9_tag *tags;
+	enum p9_proto proto;
 	bitmap_t *fids_bitmap;
 	bucket_t *fids_bucket;
 	struct p9_fid **fids;
+	uint32_t credits;
+	uint32_t max_fid;
 	uint32_t uid;
 	uint32_t recv_num;
 	uint32_t msize;
@@ -253,8 +264,8 @@ ssize_t p9pz_read_send(struct p9_handle *p9_handle, struct p9_fid *fid, size_t c
 ssize_t p9pz_read_wait(struct p9_handle *p9_handle, msk_data_t **pdata, uint16_t tag);
 
 static inline uint32_t p9p_write_len(struct p9_handle *p9_handle, uint32_t count) {
-	if (count > p9_handle->msize - P9_ROOM_TWRITE)
-		count = p9_handle->msize - P9_ROOM_TWRITE;
+	if (count > p9_handle->msize - P9_TWRITE_HDR_SIZE)
+		count = p9_handle->msize - P9_TWRITE_HDR_SIZE;
 	/* align IO if possible */
 	if (count > 1024*1024 && count < 1025*1024)
 		count = 1024*1024;
@@ -262,13 +273,32 @@ static inline uint32_t p9p_write_len(struct p9_handle *p9_handle, uint32_t count
 }
 
 static inline uint32_t p9p_read_len(struct p9_handle *p9_handle, uint32_t count) {
-	if (count > p9_handle->msize - P9_ROOM_RREAD)
-		count = p9_handle->msize - P9_ROOM_RREAD;
+	if (count > p9_handle->msize - P9_RREAD_HDR_SIZE)
+		count = p9_handle->msize - P9_RREAD_HDR_SIZE;
 	/* align IO if possible */
 	if (count > 1024*1024 && count < 1025*1024)
 		count = 1024*1024;
 	return count;
 }
 
+/** extralen = strlen(fsname) + fhandle->handle_bytes */
+static inline uint32_t liop_write_len(struct p9_handle *p9_handle, uint32_t count, int extralen) {
+	int padding = (LIOP_TWRITE_HDR_SIZE + extralen + 0xF) & (~0xF);
+	if (count > p9_handle->msize - padding)
+		count = p9_handle->msize - padding;
+	/* align IO if possible */
+	if (count > 1024*1024 && count < 1025*1024)
+		count = 1024*1024;
+	return count;
+}
+
+static inline uint32_t liop_read_len(struct p9_handle *p9_handle, uint32_t count) {
+	if (count > p9_handle->msize - LIOP_RREAD_HDR_SIZE)
+		count = p9_handle->msize - LIOP_RREAD_HDR_SIZE;
+	/* align IO if possible */
+	if (count > 1024*1024 && count < 1025*1024)
+		count = 1024*1024;
+	return count;
+}
 
 #endif

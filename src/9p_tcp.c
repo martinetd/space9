@@ -188,8 +188,8 @@ static void *msk_tcp_recv_thread(void *arg) {
 		packet_size = *((uint32_t*)data->data);
 		read_size = packet_size;
 		if (packet_size > data->max_size) {
-			INFO_LOG(internals->debug & MSK_DEBUG_EVENT, "packet bigger than data maxsize? (resp. %u and %u)", packet_size, data->max_size);
-			read_size = data->max_size;
+			ERROR_LOG("packet bigger than data maxsize! (resp. %u and %u)\nTCP engine cannot recover from misalignment, aborting connexion.", packet_size, data->max_size);
+			break;
 		}
 
 		do {
@@ -226,6 +226,8 @@ static void *msk_tcp_recv_thread(void *arg) {
 
 		ctx->used = MSK_CTX_FREE;
 	}
+
+	/* XXX shutdown connexion */
 	pthread_exit(NULL);
 }
 

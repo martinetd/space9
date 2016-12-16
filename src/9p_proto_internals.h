@@ -161,6 +161,7 @@ do {                                      \
   __cursor += P9_TYPE_SIZE + P9_TAG_SIZE; \
 } while( 0 )
 
+
 #define p9_getptr( __cursor, __pvar, __type ) \
 do {                                          \
   __pvar = (__type *)__cursor;                \
@@ -242,16 +243,12 @@ do {                                        \
   __cursor += __len;                        \
 } while( 0 )
 
-/* p9_setbuffer :
- * Copy data from __buffer into the reply,
- * with a length uint32_t header.
- */
-#define p9_setbuffer( __cursor, __len, __buffer ) \
-do {                                              \
-  *((uint32_t *)__cursor) = __len;                \
-  __cursor += sizeof( uint32_t );                 \
-  memcpy( __cursor, __buffer, __len );            \
-  __cursor += __len;                              \
+#define p9_sethandle( __cursor, __handle )               \
+do {                                                       \
+  p9_setvalue(__cursor, __handle->handle_bytes, uint32_t); \
+  p9_setvalue(__cursor, __handle->handle_type, uint32_t);  \
+  memcpy( __cursor, __handle->f_handle, __handle->handle_bytes ); \
+  __cursor += __handle->handle_bytes;                      \
 } while( 0 )
 
 #define p9_initcursor( __cursor, __start, __msgtype, __tag ) \

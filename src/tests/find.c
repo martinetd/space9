@@ -39,6 +39,7 @@
 #define DEFAULT_THRNUM 10
 #define DEFAULT_STARTPOINT "bigtree"
 #define DEFAULT_CONFFILE "../sample.conf"
+#define DEFAULT_SERVER "127.0.0.1"
 
 char *startpoint = DEFAULT_STARTPOINT;
 int verbose = 0;
@@ -164,11 +165,15 @@ int main(int argc, char **argv) {
 	pthread_t *thrid;
 	int thrnum = 0;
 	char *conffile = DEFAULT_CONFFILE;
+	char *server = DEFAULT_SERVER;
+	char *port = NULL;
 
 	static struct option long_options[] = {
 		{ "conf",	required_argument,	0,		'c' },
-		{ "startpoint",	required_argument,	0,		's' },
-		{ "start",	required_argument,	0,		's' },
+		{ "server",	required_argument,	0,		's' },
+		{ "port",	required_argument,	0,		'p' },
+		{ "dir",	required_argument,	0,		'd' },
+		{ "start",	required_argument,	0,		'd' },
 		{ "help",	no_argument,		0,		'h' },
 		{ "threads",	required_argument,	0,		't' },
 		{ "verbose",	no_argument,		0,		'v' },
@@ -178,7 +183,7 @@ int main(int argc, char **argv) {
 	int option_index = 0;
 	int op;
 
-	while ((op = getopt_long(argc, argv, "@vc:s:ht:", long_options, &option_index)) != -1) {
+	while ((op = getopt_long(argc, argv, "@vc:s:p:d:ht:", long_options, &option_index)) != -1) {
 		switch(op) {
 			case '@':
 				printf("%s compiled on %s at %s\n", argv[0], __DATE__, __TIME__);
@@ -190,7 +195,13 @@ int main(int argc, char **argv) {
 			case 'h':
 				print_help(argv);
 				exit(0);
-			case 's':
+                        case 's':
+                                server = optarg;
+                                break;
+                        case 'p':
+                                port = optarg;
+                                break;
+			case 'd':
 				startpoint = optarg;
 				break;
 			case 'c':
@@ -226,7 +237,7 @@ int main(int argc, char **argv) {
 
 	thrid = malloc(sizeof(pthread_t)*thrnum);
 
-	rc = p9_init(&p9_handle, conffile);
+	rc = p9_init(&p9_handle, conffile, server, port);
 	if (rc) {
 		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
 		return rc;

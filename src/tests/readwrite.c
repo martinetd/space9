@@ -38,10 +38,11 @@
 
 
 #define DEFAULT_THRNUM 1
-#define DEFAULT_CHUNKSIZE (8*(1024*1024-P9_ROOM_TWRITE))
+#define DEFAULT_CHUNKSIZE (8*(1024*1024-P9_TWRITE_HDR_SIZE))
 #define DEFAULT_TOTALSIZE 2*1024*1024*1024L
 #define DEFAULT_FILENAME "readwrite"
 #define DEFAULT_CONFFILE "../sample.conf"
+#define DEFAULT_SERVER "127.0.0.1"
 
 struct thrarg {
 	struct p9_handle *p9_handle;
@@ -169,7 +170,7 @@ static void print_help(char **argv) {
 
 int main(int argc, char **argv) {
 	int rc, i;
-	char *conffile;
+	char *conffile, *server, *port;
 	pthread_t *thrid;
 	int thrnum = 0;
 	int pipeline;
@@ -182,23 +183,27 @@ int main(int argc, char **argv) {
 	thrarg.basename = DEFAULT_FILENAME;
 	pipeline = 0;
 	conffile = DEFAULT_CONFFILE;
+	server = DEFAULT_SERVER;
+	port = NULL;
 
 	static struct option long_options[] = {
 		{ "conf",	required_argument,	0,		'c' },
-		{ "chunk-size",	required_argument,	0,		's' },
-		{ "chunk",	required_argument,	0,		's' },
+		{ "server",	required_argument,	0,		's' },
+		{ "port",	required_argument,	0,		'p' },
+		{ "chunk-size",	required_argument,	0,		'C' },
+		{ "chunk",	required_argument,	0,		'C' },
 		{ "filesize",	required_argument,	0,		'S' },
 		{ "filename",	required_argument,	0,		'f' },
 		{ "help",	no_argument,		0,		'h' },
 		{ "threads",	required_argument,	0,		't' },
-		{ "pipeline",	required_argument,	0,		'p' },
+		{ "pipeline",	required_argument,	0,		'P' },
 		{ 0,		0,			0,		 0  }
 	};
 
 	int option_index = 0;
 	int op;
 
-	while ((op = getopt_long(argc, argv, "@c:s:S:f:hp:t:", long_options, &option_index)) != -1) {
+	while ((op = getopt_long(argc, argv, "@c:s:p:C:S:f:hP:t:", long_options, &option_index)) != -1) {
 		switch(op) {
 			case '@':
 				printf("%s compiled on %s at %s\n", argv[0], __DATE__, __TIME__);
@@ -210,7 +215,13 @@ int main(int argc, char **argv) {
 			case 'h':
 				print_help(argv);
 				exit(0);
-			case 's':
+                        case 's':
+                                server = optarg;
+                                break;
+                        case 'p':
+                                port = optarg;
+                                break;
+			case 'C':
 				thrarg.chunksize = strtol(optarg, &optarg, 10);
 				if (set_size(&thrarg.chunksize, optarg) || thrarg.chunksize == 0) {
 					printf("invalid chunksize %s, using default\n", optarg);
@@ -237,7 +248,7 @@ int main(int argc, char **argv) {
 					thrnum = DEFAULT_THRNUM;
 				}
 				break;
-			case 'p':
+			case 'P':
 				pipeline = atoi(optarg);
 				if (pipeline == 0) {
 					printf("invalid pipeline number %s, using conf value\n", optarg);
@@ -262,7 +273,7 @@ int main(int argc, char **argv) {
 	pthread_mutex_init(&thrarg.lock, NULL);
 	pthread_barrier_init(&thrarg.barrier, NULL, thrnum);
 
-	rc = p9_init(&thrarg.p9_handle, conffile);
+	rc = p9_init(&thrarg.p9_handle, conffile, server, port);
 	if (rc) {
 		ERROR_LOG("Init failure: %s (%d)", strerror(rc), rc);
 		return rc;
